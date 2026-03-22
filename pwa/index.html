@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b1220" />
+    <title>Klub — Zarządzanie</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./assets/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <nav class="topnav" aria-label="Nawigacja">
+        <div class="topnav__tabs" role="tablist" aria-label="Zakładki">
+          <a class="topnav__tab" href="#/attendance" id="tab-attendance" role="tab" aria-label="Obecność">
+            <span class="topnav__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M9.2 12.6l1.8 1.8 3.8-4" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M12 21a9 9 0 1 0-9-9 9 9 0 0 0 9 9Z" stroke="currentColor" stroke-width="2.2"/>
+              </svg>
+            </span>
+          </a>
+          <a class="topnav__tab" href="#/payments" id="tab-payments" role="tab" aria-label="Płatności">
+            <span class="topnav__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 3c4.4 0 8 1.8 8 4s-3.6 4-8 4-8-1.8-8-4 3.6-4 8-4Z" stroke="currentColor" stroke-width="2.2"/>
+                <path d="M4 7v5c0 2.2 3.6 4 8 4s8-1.8 8-4V7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+                <path d="M4 12v5c0 2.2 3.6 4 8 4s8-1.8 8-4v-5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+              </svg>
+            </span>
+          </a>
+          <a class="topnav__tab" href="#/stats" id="tab-stats" role="tab" aria-label="Statystyki">
+            <span class="topnav__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M4 19V5" stroke="rgba(255,255,255,0.78)" stroke-width="2.2" stroke-linecap="round"/>
+                <path d="M4 19h16" stroke="rgba(255,255,255,0.78)" stroke-width="2.2" stroke-linecap="round"/>
+                <path d="M8 17v-6" stroke="rgba(96,165,250,0.98)" stroke-width="2.2" stroke-linecap="round"/>
+                <path d="M12 17V9" stroke="rgba(52,211,153,0.98)" stroke-width="2.2" stroke-linecap="round"/>
+                <path d="M16 17V7" stroke="rgba(251,191,36,0.98)" stroke-width="2.2" stroke-linecap="round"/>
+              </svg>
+            </span>
+          </a>
+          <a class="topnav__tab" href="#/groups" id="tab-groups" role="tab" aria-label="Grupy">
+            <span class="topnav__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M16 11a3 3 0 1 0-3-3 3 3 0 0 0 3 3Z" stroke="currentColor" stroke-width="2.2"/>
+                <path d="M8 12a3 3 0 1 0-3-3 3 3 0 0 0 3 3Z" stroke="currentColor" stroke-width="2.2"/>
+                <path d="M13 21v-1a4 4 0 0 1 4-4h2" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+                <path d="M3 21v-1a4 4 0 0 1 4-4h4" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+              </svg>
+            </span>
+          </a>
+          <a class="topnav__tab" href="#/people" id="tab-people" role="tab" aria-label="Osoby">
+            <span class="topnav__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Z" stroke="currentColor" stroke-width="2.2"/>
+                <path d="M4 21v-1a7 7 0 0 1 14 0v1" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+              </svg>
+            </span>
+          </a>
+        </div>
+        <div class="topnav__actions">
+          <div id="topbarActions"></div>
+          <a class="btn btn--ghost topnav__gear" href="#/settings" aria-label="Ustawienia">⚙</a>
+        </div>
+      </nav>
+
+      <main class="main" id="main" aria-live="polite"></main>
+    </div>
+
+    <dialog class="modal" id="modal">
+      <form method="dialog" class="modal__card" id="modalForm">
+        <div class="modal__header">
+          <div class="modal__title" id="modalTitle">Okno</div>
+          <button class="btn btn--ghost" value="cancel" aria-label="Zamknij">✕</button>
+        </div>
+        <div class="modal__body" id="modalBody"></div>
+        <div class="modal__footer" id="modalFooter"></div>
+      </form>
+    </dialog>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
