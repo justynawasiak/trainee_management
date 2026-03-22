@@ -23,8 +23,7 @@ export async function renderSettings({ store, pricing, setPricing, navigate }) {
     list.appendChild(
       el("div", { class: "item" }, [
         el("div", { class: "stack" }, [
-          el("div", { class: "title", text: `${k} trening/tydzień` }),
-          el("div", { class: "sub", text: `Kwota miesięczna (${pricing.currency ?? "PLN"})` })
+          el("div", { class: "title", text: `${k} trening${k === 1 ? "" : "i"}` }),
         ]),
         el("div", { style: "min-width:160px" }, [input])
       ])
@@ -36,7 +35,7 @@ export async function renderSettings({ store, pricing, setPricing, navigate }) {
     el("div", { class: "item" }, [
       el("div", { class: "stack" }, [
         el("div", { class: "title", text: "Wszystkie" }),
-        el("div", { class: "sub", text: `Kwota dla > max treningów/tydzień (${pricing.currency ?? "PLN"})` })
+        el("div", { class: "sub", text: "Kwota dla > max treningów" })
       ]),
       el("div", { style: "min-width:160px" }, [allInput])
     ])

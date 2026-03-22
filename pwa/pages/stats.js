@@ -64,7 +64,7 @@ function svgBars({ labels, values, color }) {
   const ticks = labels
     .map((lab, i) => {
       const x = pad + i * bw + bw / 2;
-      return `<text x="${x}" y="${h - 2}" text-anchor="middle" font-size="10" fill="rgba(255,255,255,0.65)">${lab}</text>`;
+      return `<text x="${x}" y="${h - 2}" text-anchor="middle" font-size="11" fill="rgba(255,255,255,0.72)">${lab}</text>`;
     })
     .join("");
 
@@ -90,7 +90,7 @@ export async function renderStats({ store, pricing, now, navigate }) {
   setTitle("Statystyki");
   setActions([]);
 
-  const main = el("div", { class: "container" });
+  const main = el("div", { class: "container stats" });
   const trainees = await store.getAll("trainees");
 
   if (trainees.length === 0) {
@@ -114,6 +114,7 @@ export async function renderStats({ store, pricing, now, navigate }) {
   const personSelect = el(
     "select",
     {
+      class: "input",
       onchange: (e) => {
         selectedId = e.target.value;
         renderBody();
@@ -128,6 +129,7 @@ export async function renderStats({ store, pricing, now, navigate }) {
   const rangeSelect = el(
     "select",
     {
+      class: "input",
       onchange: (e) => {
         range = e.target.value;
         renderBody();
@@ -144,12 +146,11 @@ export async function renderStats({ store, pricing, now, navigate }) {
 
   main.appendChild(
     el("div", { class: "card card--hero" }, [
-      el("div", { class: "row space" }, [
+      el("div", { class: "row space wrap" }, [
         el("div", { class: "stack" }, [
           el("div", { class: "title", text: "Statystyki" }),
-          el("div", { class: "sub", text: "Obecność oraz zaległe płatności w formie wykresów." })
         ]),
-        el("div", { class: "stack", style: "gap:8px;min-width: 220px" }, [personSelect, rangeSelect])
+        el("div", { class: "stack", style: "gap:8px" }, [personSelect, rangeSelect])
       ])
     ])
   );
@@ -197,7 +198,7 @@ export async function renderStats({ store, pricing, now, navigate }) {
       const overallPresent = attendanceAll.filter((r) => r.present).length;
       const overallTotal = attendanceAll.length;
       const overallCard = el("div", { class: "card" }, [
-        el("div", { class: "row space" }, [
+        el("div", { class: "row space wrap" }, [
           el("div", { class: "title", text: "Obecność (wszyscy)" }),
           el("div", { class: "pill", text: `${startISO} → ${endISO}` })
         ]),
@@ -225,8 +226,10 @@ export async function renderStats({ store, pricing, now, navigate }) {
         .sort((a, b) => b.pct - a.pct || a.name.localeCompare(b.name));
 
       const groupCard = el("div", { class: "card" }, [
-        el("div", { class: "title", text: "Obecność wg grup" }),
-        el("div", { class: "sub", text: "Wykres pokazuje % obecności (wg zapisanych wpisów w danym zakresie)." }),
+        el("div", { class: "stack" }, [
+          el("div", { class: "title", text: "Obecność wg grup" }),
+          el("div", { class: "sub", text: "Wykres pokazuje % obecności (wg zapisanych wpisów w danym zakresie)." })
+        ]),
         el("div", { class: "hr" })
       ]);
       if (groupRows.length === 0) {
@@ -241,7 +244,6 @@ export async function renderStats({ store, pricing, now, navigate }) {
             bigListItem({
               title: g.name,
               subtitle: `Obecność: ${g.present}/${g.total} (${g.pct}%)`,
-              onClick: () => navigate(`#/attendance/group?groupId=${encodeURIComponent(g.groupId)}&date=${encodeURIComponent(endISO)}`)
             })
           );
         });
@@ -267,7 +269,7 @@ export async function renderStats({ store, pricing, now, navigate }) {
       }
 
       const overdueCard = el("div", { class: "card" }, [
-        el("div", { class: "row space" }, [
+        el("div", { class: "row space wrap" }, [
           el("div", { class: "title", text: "Zaległe płatności (wszyscy)" }),
           el("div", { class: "pill", text: `Osób z zaległością: ${overduePeople}` })
         ]),
@@ -306,8 +308,10 @@ export async function renderStats({ store, pricing, now, navigate }) {
         .sort((a, b) => b.people - a.people || b.months - a.months || a.name.localeCompare(b.name));
 
       const groupPayCard = el("div", { class: "card" }, [
-        el("div", { class: "title", text: "Zaległości wg grup" }),
-        el("div", { class: "sub", text: "Wykres: liczba osób z zaległością w każdej grupie." }),
+        el("div", { class: "stack" }, [
+          el("div", { class: "title", text: "Zaległości wg grup" }),
+          el("div", { class: "sub", text: "Wykres: liczba osób z zaległością w każdej grupie." })
+        ]),
         el("div", { class: "hr" })
       ]);
       if (groupPayRows.length === 0) {
@@ -322,7 +326,6 @@ export async function renderStats({ store, pricing, now, navigate }) {
             bigListItem({
               title: g.name,
               subtitle: `Zaległości: ${g.people}/${g.members} osób · miesięcy: ${g.months}`,
-              onClick: () => navigate(`#/groups/detail?groupId=${encodeURIComponent(g.groupId)}`)
             })
           );
         });
@@ -366,7 +369,7 @@ export async function renderStats({ store, pricing, now, navigate }) {
     });
 
     const paymentCard = el("div", { class: "card" }, [
-      el("div", { class: "row space" }, [
+      el("div", { class: "row space wrap" }, [
         el("div", { class: "title", text: "Zaległe płatności" }),
         el("div", { class: "pill", text: `Zaległe miesiące: ${overdueMonths.length}` })
       ]),
@@ -395,7 +398,7 @@ ${months
 ${labels
   .map((lab, i) => {
     const x = 10 + i * ((360 - 20) / 6) + ((360 - 20) / 6) / 2;
-    return `<text x="${x}" y="118" text-anchor="middle" font-size="10" fill="rgba(255,255,255,0.65)">${lab}</text>`;
+    return `<text x="${x}" y="118" text-anchor="middle" font-size="11" fill="rgba(255,255,255,0.72)">${lab}</text>`;
   })
   .join("\n")}
 </svg>`;

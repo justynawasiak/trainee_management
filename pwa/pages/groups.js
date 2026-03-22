@@ -41,7 +41,6 @@ export async function renderGroups({ store, navigate }) {
       el("div", { class: "row space" }, [
         el("div", { class: "stack" }, [
           el("div", { class: "title", text: "Grupy" }),
-          el("div", { class: "sub", text: "Grupy + harmonogram + przypisane osoby." })
         ]),
         btn("Dodaj", () => openGroupEditor({ store, navigate }), "btn--primary")
       ]),
@@ -118,7 +117,6 @@ function renderScheduleCard({ store, navigate, group }) {
       el("div", { class: "title", text: "Harmonogram" }),
       btn("Dodaj wpis", () => openScheduleEntryEditor({ store, navigate }, group.id), "")
     ]),
-    el("div", { class: "sub", text: "Dzień tygodnia + godzina." }),
     el("div", { class: "hr" })
   ]);
 
@@ -202,8 +200,7 @@ async function openGroupEditor(ctx, groupId) {
   const group = groupId ? await store.get("groups", groupId) : null;
 
   const name = el("input", { class: "input", placeholder: "Nazwa grupy", value: group?.name ?? "" });
-  const hint = el("div", { class: "hint", text: "Harmonogram dodasz w szczegółach grupy (dzień + godzina)." });
-  const body = el("div", {}, [name, hint]);
+  const body = el("div", { class: "stack" }, [name]);
 
   const footer = [
     group
@@ -257,16 +254,15 @@ async function openScheduleEntryEditor(ctx, groupId) {
 
   const day = el(
     "select",
-    {},
+    { class: "input" },
     DAYS.map((d) => el("option", { value: String(d.id), text: d.label }))
   );
   const startTime = el("input", { class: "input", type: "time", value: "18:00" });
   const durationMin = el("input", { class: "input", type: "number", min: "15", step: "5", value: "60" });
 
-  const body = el("div", {}, [
-    el("div", { class: "grid2" }, [day, startTime]),
+  const body = el("div", { class: "stack" }, [
+    el("div", { class: "grid2", style: "gap:14px" }, [day, startTime]),
     durationMin,
-    el("div", { class: "hint", text: "Tip: zostaw domyślnie 60 min i dodaj tylko dzień + godzinę." })
   ]);
 
   const footer = [
@@ -308,7 +304,6 @@ async function openAddMember(ctx, groupId) {
   const selected = new Set();
   let search = "";
 
-  const stats = el("div", { class: "pill", text: `Zaznaczone: 0/${options.length}` });
   const searchInput = el("input", {
     class: "input",
     type: "search",
@@ -320,9 +315,6 @@ async function openAddMember(ctx, groupId) {
   });
 
   const list = el("div", { class: "checklist" });
-  function updateStats() {
-    stats.textContent = `Zaznaczone: ${selected.size}/${options.length}`;
-  }
   function renderList() {
     list.innerHTML = "";
     const q = (search ?? "").trim().toLowerCase();
@@ -349,7 +341,6 @@ async function openAddMember(ctx, groupId) {
       function sync() {
         if (cb.checked) selected.add(t.id);
         else selected.delete(t.id);
-        updateStats();
       }
       cb.addEventListener("change", () => sync());
       row.addEventListener("click", (e) => {
@@ -368,26 +359,22 @@ async function openAddMember(ctx, groupId) {
   }
 
   renderList();
-  updateStats();
 
   const quick = el("div", { class: "row", style: "gap:8px;flex-wrap:wrap;justify-content:flex-end" }, [
     btn("Zaznacz wszystko", () => {
       options.forEach((t) => selected.add(t.id));
-      updateStats();
       renderList();
     }),
     btn("Wyczyść", () => {
       selected.clear();
-      updateStats();
       renderList();
     })
   ]);
 
-  const body = el("div", {}, [
-    el("div", { class: "stack", style: "gap:8px" }, [stats, quick]),
+  const body = el("div", { class: "stack" }, [
+    quick,
     searchInput,
-    list,
-    el("div", { class: "hint", text: "Zaznacz osoby i kliknij „Dodaj zaznaczone”." })
+    list
   ]);
 
   const footer = [
@@ -427,10 +414,9 @@ async function openEditMemberSessions(ctx, membershipId) {
   if (!membership) return;
   const trainee = await store.get("trainees", membership.traineeId);
   const sessions = el("input", { class: "input", type: "number", min: "0", step: "1", value: String(Number(membership.sessionsPerWeek ?? 0)) });
-  const body = el("div", {}, [
+  const body = el("div", { class: "stack" }, [
     el("div", { class: "title", text: trainee ? `${trainee.lastName ?? ""} ${trainee.firstName ?? ""}`.trim() : "Osoba" }),
     sessions,
-    el("div", { class: "hint", text: "Ta wartość wpływa na kwotę auto (suma po wszystkich grupach)." })
   ]);
   const footer = [
     el("button", { class: "btn", value: "cancel", text: "Anuluj" }),

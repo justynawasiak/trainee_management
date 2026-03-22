@@ -43,10 +43,9 @@ export async function renderPeople({ store, pricing, navigate }) {
 
   main.appendChild(
     el("div", { class: "card card--hero" }, [
-      el("div", { class: "row space" }, [
+      el("div", { class: "row space wrap" }, [
         el("div", { class: "stack" }, [
           el("div", { class: "title", text: "Osoby" }),
-          el("div", { class: "sub", text: "Imię, nazwisko, telefon, e-mail + kwota domyślna." })
         ]),
         btn("Dodaj", () => openTraineeEditor({ store, pricing, navigate }), "btn--primary")
       ]),
@@ -81,7 +80,7 @@ async function openTraineeEditor(ctx, traineeId) {
   const phone = el("input", { class: "input", placeholder: "Telefon", inputmode: "tel", value: trainee?.phone ?? "" });
   const email = el("input", { class: "input", placeholder: "E-mail", inputmode: "email", value: trainee?.email ?? "" });
 
-  const pricingMode = el("select", {}, [
+  const pricingMode = el("select", { class: "input" }, [
     el("option", { value: "auto", text: "Kwota: automatycznie" }),
     el("option", { value: "manual", text: "Kwota: ręcznie" })
   ]);
@@ -101,15 +100,11 @@ async function openTraineeEditor(ctx, traineeId) {
     manualFeeWrap.hidden = pricingMode.value !== "manual";
   };
 
-  const body = el("div", {}, [
+  const body = el("div", { class: "stack" }, [
     el("div", { class: "grid2" }, [firstName, lastName]),
     el("div", { class: "grid2" }, [phone, email]),
-    el("div", { class: "hr" }),
-    el("div", { class: "title", text: "Kwota domyślna" }),
-    el("div", { class: "sub", text: `Treningi/tydzień (suma): ${fee.totalSessionsPerWeek} → auto: ${fmtMoney(fee.autoFee, fee.currency)}` }),
     pricingMode,
-    manualFeeWrap,
-    el("div", { class: "hint", text: "Kwota auto liczy się z przypisań do grup (treningi/tydzień). Możesz ją nadpisać ręcznie." })
+    manualFeeWrap
   ]);
 
   const footer = [

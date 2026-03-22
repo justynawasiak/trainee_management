@@ -50,23 +50,28 @@ export function iconToggle(on) {
 }
 
 export function bigListItem({ title, subtitle, right, onClick }) {
+  const clickable = typeof onClick === "function";
   return el(
     "div",
     {
-      class: "item big",
-      role: "button",
-      tabindex: "0",
-      onclick: onClick,
-      onkeydown: (e) => {
-        if (e.key === "Enter" || e.key === " ") onClick?.();
-      }
+      class: `item big${clickable ? "" : " item--static"}`,
+      ...(clickable
+        ? {
+            role: "button",
+            tabindex: "0",
+            onclick: onClick,
+            onkeydown: (e) => {
+              if (e.key === "Enter" || e.key === " ") onClick?.();
+            }
+          }
+        : {})
     },
     [
       el("div", { class: "stack" }, [
         el("div", { class: "title", text: title }),
         subtitle ? el("div", { class: "sub", text: subtitle }) : null
       ]),
-      right ?? el("div", { class: "sub muted", text: "›" })
+      right ?? (clickable ? el("div", { class: "sub muted", text: "›" }) : null)
     ]
   );
 }

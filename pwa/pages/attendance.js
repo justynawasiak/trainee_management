@@ -6,6 +6,22 @@ function isoFromParts(y, m, d) {
   return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
+function dateLabelForGroup(group, dateISO) {
+  const d = new Date(`${dateISO}T12:00:00`);
+  const dow = ((d.getDay() + 6) % 7) + 1; // Mon=1..Sun=7
+  const dayName = DAYS.find((x) => x.id === dow)?.label ?? "";
+  const times = (group?.schedule ?? [])
+    .filter((e) => Number(e.dayOfWeek) === dow && e.startTime)
+    .map((e) => e.startTime)
+    .sort((a, b) => String(a).localeCompare(String(b)));
+
+  let timePart = "";
+  if (times.length === 1) timePart = times[0];
+  else if (times.length > 1) timePart = `${times[0]} (+${times.length - 1})`;
+
+  return `${dateISO} · ${dayName}${timePart ? ` · ${timePart}` : ""}`.trim();
+}
+
 function addMonths(date, delta) {
   const d = new Date(date);
   d.setDate(1);
@@ -128,7 +144,6 @@ export async function renderAttendance({ store, now, setNow, navigate }) {
       el("div", { class: "row space" }, [
         el("div", { class: "stack" }, [
           el("div", { class: "title", text: "Obecność" }),
-          el("div", { class: "sub", text: `Dzisiaj: ${dateISO}` })
         ]),
         el("input", {
           class: "input",
@@ -142,8 +157,6 @@ export async function renderAttendance({ store, now, setNow, navigate }) {
           }
         })
       ]),
-      el("div", { class: "hr" }),
-      el("div", { class: "sub", text: "Wybierz grupę (1 klik → lista osób → 1 klik obecny/nieobecny)." })
     ])
   );
 
@@ -215,6 +228,8 @@ export async function renderAttendanceGroup({ store, now, navigate, params }) {
   setTitle(groupHasTrainingOnDate(group, date) ? "Obecność (dziś)" : "Obecność");
   setActions([]);
 
+  const dateLabel = dateLabelForGroup(group, dateISO);
+
   const traineeById = new Map(trainees.map((t) => [t.id, t]));
   const roster = memberships
     .map((m) => traineeById.get(m.traineeId))
@@ -228,7 +243,7 @@ export async function renderAttendanceGroup({ store, now, navigate, params }) {
   const presentByTrainee = new Map(attendanceRows.map((r) => [r.traineeId, Boolean(r.present)]));
 
   let search = "";
-  const stats = el("div", { class: "pill" });
+  const stats = el("div", { class: "pill pill--nowrap" });
   const list = el("div", { class: "list" });
 
   function updateStats() {
@@ -275,7 +290,6 @@ export async function renderAttendanceGroup({ store, now, navigate, params }) {
       el("div", { class: "row space" }, [
         el("div", { class: "stack" }, [
           el("div", { class: "title", text: group.name ?? "Grupa" }),
-          el("div", { class: "sub", text: `Data: ${dateISO} · ${fmtSchedule(group.schedule)}` })
         ]),
         btn("←", () => navigate("#/attendance"))
       ]),
@@ -293,10 +307,9 @@ export async function renderAttendanceGroup({ store, now, navigate, params }) {
         el("button", {
           class: "input input--button",
           type: "button",
-          text: dateISO,
+          text: dateLabel,
           onclick: () => {
-            const body = el("div", {}, [
-              el("div", { class: "sub", text: "Podkreślone dni = zajęcia wg harmonogramu." }),
+            const body = el("div", { class: "stack" }, [
               calendar({
                 group,
                 selectedISO: dateISO,
@@ -326,7 +339,7 @@ export async function renderAttendanceGroup({ store, now, navigate, params }) {
 
   main.appendChild(
     el("div", { class: "card" }, [
-      el("div", { class: "row space" }, [
+      el("div", { class: "row space wrap" }, [
         stats,
         el("div", { class: "row", style: "gap:8px;flex-wrap:wrap;justify-content:flex-end" }, [
           btn("Wszyscy obecni", async () => {

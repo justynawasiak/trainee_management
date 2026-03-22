@@ -71,10 +71,9 @@ export async function renderPayments({ store, pricing, now, navigate }) {
 
   main.appendChild(
     el("div", { class: "card card--hero" }, [
-      el("div", { class: "row space" }, [
+      el("div", { class: "row space wrap" }, [
         el("div", { class: "stack" }, [
           el("div", { class: "title", text: "Płatności" }),
-          el("div", { class: "sub", text: "1 klik: oznacz opłacone / nieopłacone." })
         ]),
         el("input", {
           class: "input",

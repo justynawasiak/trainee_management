@@ -78,6 +78,11 @@ export async function createStore() {
       const store = transaction.objectStore(storeName);
       await withRequest(store.delete(key));
     },
+    async clear(storeName) {
+      const transaction = db.transaction([storeName], "readwrite");
+      const store = transaction.objectStore(storeName);
+      await withRequest(store.clear());
+    },
     async getAllByIndex(storeName, indexName, query) {
       const transaction = db.transaction([storeName], "readonly");
       const store = transaction.objectStore(storeName);
@@ -98,10 +103,11 @@ export async function createStore() {
 }
 
 async function ensureDefaults(db) {
-  const transaction = db.transaction(["settings"], "readwrite");
-  const store = transaction.objectStore("settings");
-  const existing = await withRequest(store.get("pricing")).catch(() => undefined);
-  if (!existing) {
+  const transaction = db.transaction(["settings", "attendance", "payments"], "readwrite");
+  const settings = transaction.objectStore("settings");
+
+  const existingPricing = await withRequest(settings.get("pricing")).catch(() => undefined);
+  if (!existingPricing) {
     const pricing = {
       key: "pricing",
       currency: "PLN",
@@ -113,8 +119,23 @@ async function ensureDefaults(db) {
         "all": 320
       }
     };
-    await withRequest(store.put(pricing));
+    await withRequest(settings.put(pricing));
   }
+
+  // One-time maintenance: clear attendance + payments (keep people/groups/memberships).
+  const maintenanceKey = "maintenance_clear_attendance_payments_v1";
+  const done = await withRequest(settings.get(maintenanceKey)).catch(() => undefined);
+  if (!done) {
+    await withRequest(transaction.objectStore("attendance").clear());
+    await withRequest(transaction.objectStore("payments").clear());
+    await withRequest(
+      settings.put({
+        key: maintenanceKey,
+        doneAt: Date.now()
+      })
+    );
+  }
+
   await new Promise((resolve, reject) => {
     transaction.oncomplete = resolve;
     transaction.onerror = () => reject(transaction.error ?? new Error("Settings tx error"));
