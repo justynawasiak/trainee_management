@@ -67,6 +67,7 @@ export async function createStore(opts = {}) {
   const dbName = ns ? `${DB_NAME_BASE}__${ns}` : DB_NAME_BASE;
   const db = await openDb(dbName);
   await ensureDefaults(db);
+  const onWrite = typeof opts.onWrite === "function" ? opts.onWrite : null;
   return {
     dbName,
     async getAll(storeName) {
@@ -83,16 +84,19 @@ export async function createStore(opts = {}) {
       const transaction = db.transaction([storeName], "readwrite");
       const store = transaction.objectStore(storeName);
       await withRequest(store.put(value));
+      onWrite?.();
     },
     async delete(storeName, key) {
       const transaction = db.transaction([storeName], "readwrite");
       const store = transaction.objectStore(storeName);
       await withRequest(store.delete(key));
+      onWrite?.();
     },
     async clear(storeName) {
       const transaction = db.transaction([storeName], "readwrite");
       const store = transaction.objectStore(storeName);
       await withRequest(store.clear());
+      onWrite?.();
     },
     async getAllByIndex(storeName, indexName, query) {
       const transaction = db.transaction([storeName], "readonly");
@@ -108,6 +112,7 @@ export async function createStore(opts = {}) {
     },
     async runTx(storeNames, mode, runner) {
       await tx(db, storeNames, mode, runner);
+      if (String(mode) === "readwrite") onWrite?.();
     },
     uuid
   };

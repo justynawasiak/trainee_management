@@ -34,10 +34,20 @@ if (!is_dir($dir)) {
 $file = $dir . '/sync_' . $ns . '.json';
 $tmp = $file . '.tmp';
 
-$ok = @file_put_contents($tmp, $encoded, LOCK_EX);
+$updatedAt = time();
+$wrapped = json_encode([
+  'updatedAt' => $updatedAt,
+  'username' => $u,
+  'payload' => $body
+], JSON_UNESCAPED_UNICODE);
+if ($wrapped === false) {
+  json_response(400, ['ok' => false, 'error' => 'bad_payload']);
+}
+
+$ok = @file_put_contents($tmp, $wrapped, LOCK_EX);
 if ($ok === false) {
   json_response(500, ['ok' => false, 'error' => 'write_failed']);
 }
 @rename($tmp, $file);
 
-json_response(200, ['ok' => true]);
+json_response(200, ['ok' => true, 'updatedAt' => $updatedAt]);

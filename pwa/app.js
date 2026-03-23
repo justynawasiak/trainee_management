@@ -6,14 +6,138 @@ import { renderPeople } from "./pages/people.js";
 import { renderStats } from "./pages/stats.js";
 import { renderSettings } from "./pages/settings.js";
 import { el, setActiveTab } from "./ui.js";
+import { exportAll, replaceAll } from "./logic.js";
 
 const state = {
   store: null,
   now: new Date(),
   pricing: null,
   user: null,
-  renderNonce: 0
+  renderNonce: 0,
+  syncSuspended: false
 };
+
+let syncTimer = null;
+let syncInFlight = false;
+let syncDirty = false;
+let syncLastAttemptAt = 0;
+let pullTimer = null;
+let lastAppliedUpdatedAt = 0;
+
+function lastKey() {
+  return state.user ? `klub_sync_updatedAt__${String(state.user).toLowerCase()}` : "klub_sync_updatedAt__anon";
+}
+
+function loadLastApplied() {
+  try {
+    lastAppliedUpdatedAt = Number(localStorage.getItem(lastKey()) ?? "0") || 0;
+  } catch {
+    lastAppliedUpdatedAt = 0;
+  }
+}
+
+function saveLastApplied(v) {
+  lastAppliedUpdatedAt = Number(v || 0) || 0;
+  try {
+    localStorage.setItem(lastKey(), String(lastAppliedUpdatedAt));
+  } catch {
+    // ignore
+  }
+}
+
+async function pushSyncNow() {
+  if (!state.user) return;
+  if (!state.store) return;
+  if (state.syncSuspended) return;
+  if (syncInFlight) {
+    syncDirty = true;
+    return;
+  }
+  const now = Date.now();
+  // Basic backoff if server is down
+  if (now - syncLastAttemptAt < 2500) return;
+  syncLastAttemptAt = now;
+
+  syncInFlight = true;
+  try {
+    const payload = await exportAll(state.store);
+    let res = await fetch("/api/sync/push", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (res.status === 404) {
+      res = await fetch("/api/sync_push.php", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+    }
+    if (res.ok) {
+      try {
+        const json = await res.json();
+        if (json?.updatedAt) saveLastApplied(Number(json.updatedAt) || 0);
+      } catch {
+        // ignore
+      }
+    }
+  } catch {
+    // ignore (offline / server error)
+  } finally {
+    syncInFlight = false;
+    if (syncDirty) {
+      syncDirty = false;
+      scheduleAutoSync();
+    }
+  }
+}
+
+function scheduleAutoSync() {
+  if (!state.user) return;
+  if (state.syncSuspended) return;
+  if (syncTimer) clearTimeout(syncTimer);
+  // debounce: push after a short idle
+  syncTimer = setTimeout(() => {
+    syncTimer = null;
+    pushSyncNow();
+  }, 1200);
+}
+
+async function pullSyncIfNewer() {
+  if (!state.user) return;
+  if (!state.store) return;
+  if (state.syncSuspended) return;
+  // Avoid overwriting local changes that haven't been pushed yet
+  if (syncInFlight || syncDirty || syncTimer) return;
+
+  try {
+    let res = await fetch("/api/sync/pull", { cache: "no-store" });
+    if (res.status === 404) res = await fetch("/api/sync_pull.php", { cache: "no-store" });
+    if (!res.ok) return;
+    const json = await res.json();
+    if (!json?.exists || !json?.payload?.data) return;
+    const updatedAt = Number(json.updatedAt ?? 0) || 0;
+    if (updatedAt <= lastAppliedUpdatedAt) return;
+
+    state.syncSuspended = true;
+    await replaceAll(state.store, json.payload);
+    state.syncSuspended = false;
+    state.pricing = await state.store.get("settings", "pricing");
+    saveLastApplied(updatedAt);
+    await render();
+  } catch {
+    // ignore
+  } finally {
+    state.syncSuspended = false;
+  }
+}
+
+function startAutoPull() {
+  if (pullTimer) clearInterval(pullTimer);
+  pullTimer = setInterval(() => {
+    if (document.visibilityState === "visible") pullSyncIfNewer();
+  }, 12000);
+}
 
 function routeParams() {
   const hash = location.hash || "#/attendance";
@@ -104,8 +228,9 @@ async function init() {
     }
   }
 
-  state.store = await createStore({ namespace: state.user });
+  state.store = await createStore({ namespace: state.user, onWrite: scheduleAutoSync });
   state.pricing = await state.store.get("settings", "pricing");
+  loadLastApplied();
 
   // Auto-pull from server on a fresh device (no trainees yet).
   try {
@@ -116,9 +241,11 @@ async function init() {
       if (res.ok) {
         const json = await res.json();
         if (json?.exists && json?.payload?.data) {
-          const { replaceAll } = await import("./logic.js");
+          state.syncSuspended = true;
           await replaceAll(state.store, json.payload);
+          state.syncSuspended = false;
           state.pricing = await state.store.get("settings", "pricing");
+          saveLastApplied(Number(json.updatedAt ?? 0) || 0);
         }
       }
     }
@@ -126,10 +253,29 @@ async function init() {
     // ignore
   }
 
+  window.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") pushSyncNow();
+    if (document.visibilityState === "visible") pullSyncIfNewer();
+  });
+  startAutoPull();
+
   window.addEventListener("hashchange", () => render());
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js").catch(() => {});
+    navigator.serviceWorker
+      .register("./sw.js")
+      .then((reg) => {
+        reg.update().catch(() => {});
+        if (reg.waiting) reg.waiting.postMessage({ type: "SKIP_WAITING" });
+        navigator.serviceWorker.addEventListener(
+          "controllerchange",
+          () => {
+            location.reload();
+          },
+          { once: true }
+        );
+      })
+      .catch(() => {});
   }
 
   if (!location.hash) {

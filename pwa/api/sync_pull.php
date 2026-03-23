@@ -22,5 +22,12 @@ if (!is_array($json)) {
   json_response(500, ['ok' => false, 'error' => 'corrupt']);
 }
 
-json_response(200, ['ok' => true, 'exists' => true, 'payload' => $json]);
+$updatedAt = (int)($json['updatedAt'] ?? 0);
+$payload = $json['payload'] ?? null;
+// Backward compatibility: older file might be the payload itself
+if (!is_array($payload) && is_array($json) && isset($json['data'])) {
+  $payload = $json;
+  $updatedAt = 0;
+}
 
+json_response(200, ['ok' => true, 'exists' => true, 'updatedAt' => $updatedAt, 'payload' => $payload]);

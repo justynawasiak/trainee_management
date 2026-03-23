@@ -190,6 +190,13 @@ export async function renderSettings({ store, pricing, setPricing, navigate, use
         showToast(String(e?.message ?? e));
         return;
       }
+      try {
+        const key = `klub_sync_updatedAt__${String(user).toLowerCase()}`;
+        const v = Number(json.updatedAt ?? 0) || 0;
+        if (v) localStorage.setItem(key, String(v));
+      } catch {
+        // ignore
+      }
       const updatedPricing = await store.get("settings", "pricing");
       setPricing(updatedPricing);
       showToast("Pobrano dane");
