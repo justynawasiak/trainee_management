@@ -44,4 +44,7 @@ Najprostszy sposób na poznanie ścieżki:
 ## Ważne
 
 - Włącz HTTPS na subdomenie (Basic Auth bez HTTPS nie ma sensu).
+- Basic Auth nie ma "wyloguj" w aplikacji: przeglądarka pamięta dane logowania. Żeby wylogować, zamknij wszystkie karty dla tej domeny albo usuń zapisane hasło dla strony.
+- Po testach zmień hasła na dłuższe i unikalne (Basic Auth na hostingu współdzielonym zwykle nie ma rate-limit).
 - Ten wariant zabezpiecza stronę na poziomie serwera WWW. Aplikacja dalej trzyma dane w przeglądarce (IndexedDB) na urządzeniu.
+  Dane są rozdzielone per użytkownik (po loginie) przez osobną bazę IndexedDB na każdy login.
