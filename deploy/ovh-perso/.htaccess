@@ -1,0 +1,21 @@
+# Basic Auth (Apache)
+AuthType Basic
+AuthName "Klub"
+
+# USTAW ABSOLUTNĄ ŚCIEŻKĘ DO PLIKU .htpasswd NA SERWERZE:
+# np. /homez.XXX/login/www/.htpasswd
+AuthUserFile __ABSOLUTE_PATH_TO_HTPASSWD__
+
+Require valid-user
+
+# Nie pozwalaj pobrać pliku haseł przez WWW
+<Files ".htpasswd">
+  Require all denied
+</Files>
+
+# Dla starszych konfiguracji Apache (jeśli powyższe nie działa)
+<FilesMatch "^\\.htpasswd$">
+  Order allow,deny
+  Deny from all
+</FilesMatch>
+

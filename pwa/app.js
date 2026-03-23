@@ -10,7 +10,9 @@ import { el, setActiveTab } from "./ui.js";
 const state = {
   store: null,
   now: new Date(),
-  pricing: null
+  pricing: null,
+  user: null,
+  renderNonce: 0
 };
 
 function routeParams() {
@@ -37,6 +39,7 @@ function setPricing(pricing) {
 }
 
 async function render() {
+  const nonce = ++state.renderNonce;
   const { path, params } = routeParams();
   setActiveTab(path);
 
@@ -50,6 +53,7 @@ async function render() {
     setNow,
     pricing: state.pricing,
     setPricing,
+    user: state.user,
     navigate,
     params
   };
@@ -67,11 +71,40 @@ async function render() {
     return;
   }
 
+  // If a newer render started while we were awaiting, skip DOM updates to avoid duplicates.
+  if (nonce !== state.renderNonce) return;
   mainRoot.appendChild(view ?? el("div", { class: "container" }));
 }
 
 async function init() {
-  state.store = await createStore();
+  // Detect authenticated user (Node server: /api/me, OVH Basic Auth: /whoami.php)
+  try {
+    const res = await fetch("/api/me", { cache: "no-store" });
+    if (res.status === 401) {
+      location.replace("/login.html");
+      return;
+    }
+    if (res.ok) {
+      const json = await res.json();
+      state.user = json?.username ?? null;
+    }
+  } catch {
+    // ignore
+  }
+
+  if (!state.user) {
+    try {
+      const res = await fetch("/whoami.php", { cache: "no-store" });
+      if (res.ok) {
+        const json = await res.json();
+        state.user = json?.username ?? null;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  state.store = await createStore({ namespace: state.user });
   state.pricing = await state.store.get("settings", "pricing");
 
   window.addEventListener("hashchange", () => render());
@@ -80,7 +113,10 @@ async function init() {
     navigator.serviceWorker.register("./sw.js").catch(() => {});
   }
 
-  if (!location.hash) location.hash = "#/attendance";
+  if (!location.hash) {
+    location.hash = "#/attendance";
+    return;
+  }
   await render();
 }
 

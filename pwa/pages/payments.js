@@ -1,6 +1,6 @@
 import { isoMonth } from "../db.js";
 import { computeTraineeFee, ensurePayment, setPaid } from "../logic.js";
-import { bigListItem, btn, el, fmtMoney, iconToggle, setActions, setTitle } from "../ui.js";
+import { bigListItem, btn, closeModal, el, fmtMoney, iconToggle, openModal, setActions, setTitle, showModalError } from "../ui.js";
 
 export async function renderPayments({ store, pricing, now, navigate }) {
   setTitle("Płatności");
@@ -17,6 +17,43 @@ export async function renderPayments({ store, pricing, now, navigate }) {
 
   const list = el("div", { class: "list" });
 
+  function openAmountModal({ trainee, payment, defaultAmount }) {
+    const input = el("input", {
+      class: "input",
+      type: "number",
+      min: "0",
+      step: "1",
+      value: String(Number(payment?.amount ?? defaultAmount ?? 0))
+    });
+
+    openModal({
+      title: `${trainee.lastName ?? ""} ${trainee.firstName ?? ""}`.trim() || "Kwota",
+      body: el("div", { class: "stack" }, [
+        el("div", { class: "sub", text: `Miesiąc: ${selectedMonth}` }),
+        el("div", { class: "sub", text: `Domyślna: ${fmtMoney(defaultAmount, pricing.currency)}` }),
+        input
+      ]),
+      footer: [
+        btn("Anuluj", () => closeModal(), "btn--ghost"),
+        btn(
+          "Zapisz",
+          async () => {
+            const raw = String(input.value ?? "").trim();
+            const val = Number(raw);
+            if (raw === "" || !Number.isFinite(val) || val < 0) {
+              showModalError("Podaj poprawną kwotę.");
+              return;
+            }
+            await setPaid(store, selectedMonth, trainee.id, Boolean(payment?.paid), val);
+            closeModal();
+            renderList();
+          },
+          "btn--good"
+        )
+      ]
+    });
+  }
+
   async function renderList() {
     list.innerHTML = "";
     const q = (search ?? "").trim().toLowerCase();
@@ -32,9 +69,10 @@ export async function renderPayments({ store, pricing, now, navigate }) {
     for (const t of sorted) {
       const fee = await computeTraineeFee({ store, pricing }, t.id);
       const mode = t.pricingMode ?? "auto";
-      const amount = mode === "manual" ? Number(t.manualMonthlyFee ?? 0) : Number(fee.autoFee ?? 0);
-      const p = await ensurePayment(store, selectedMonth, t.id, amount);
-      rows.push({ t, p, amount });
+      const defaultAmount = mode === "manual" ? Number(t.manualMonthlyFee ?? 0) : Number(fee.autoFee ?? 0);
+      const p = await ensurePayment(store, selectedMonth, t.id, defaultAmount);
+      const paymentAmount = Number(p?.amount ?? defaultAmount ?? 0);
+      rows.push({ t, p, defaultAmount, paymentAmount });
     }
 
     const filtered = rows.filter(({ t, p }) => {
@@ -48,11 +86,30 @@ export async function renderPayments({ store, pricing, now, navigate }) {
       return;
     }
 
-    for (const { t, p, amount } of filtered) {
-      const right = iconToggle(Boolean(p.paid));
-      const subtitle = [`Kwota: ${fmtMoney(amount, pricing.currency)}`, t.pricingMode === "manual" ? "ręcznie" : "auto"].join(
-        " · "
-      );
+    for (const { t, p, defaultAmount, paymentAmount } of filtered) {
+      const rightToggle = iconToggle(Boolean(p.paid));
+      const changed = Number(paymentAmount) !== Number(defaultAmount);
+      const subtitle = [
+        `Kwota: ${fmtMoney(paymentAmount, pricing.currency)}${changed ? " (zmieniona)" : ""}`,
+        t.pricingMode === "manual" ? "ręcznie" : "auto"
+      ].join(" · ");
+
+      const editBtn = el("button", {
+        type: "button",
+        class: "btn btn--ghost",
+        text: "✎",
+        "aria-label": "Zmień kwotę",
+        onclick: (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          openAmountModal({ trainee: t, payment: p, defaultAmount });
+        }
+      });
+
+      const right = el("div", { class: "row", style: "gap:6px;align-items:center;justify-content:flex-end" }, [
+        editBtn,
+        rightToggle
+      ]);
       list.appendChild(
         bigListItem({
           title: `${t.lastName ?? ""} ${t.firstName ?? ""}`.trim() || "Osoba",
@@ -61,8 +118,8 @@ export async function renderPayments({ store, pricing, now, navigate }) {
           onClick: async () => {
             const next = !Boolean(p.paid);
             p.paid = next;
-            right.classList.toggle("on", next);
-            await setPaid(store, selectedMonth, t.id, next, amount);
+            rightToggle.classList.toggle("on", next);
+            await setPaid(store, selectedMonth, t.id, next, paymentAmount);
           }
         })
       );

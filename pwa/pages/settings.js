@@ -1,11 +1,50 @@
 import { exportAll, importAll } from "../logic.js";
 import { btn, el, setActions, setTitle, showToast } from "../ui.js";
 
-export async function renderSettings({ store, pricing, setPricing, navigate }) {
+async function doLogout() {
+  try {
+    await fetch("/api/logout", { method: "POST" });
+  } catch {
+    // ignore
+  }
+
+  try {
+    if ("serviceWorker" in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((r) => r.unregister()));
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    }
+  } catch {
+    // ignore
+  }
+
+  location.href = "/";
+}
+
+export async function renderSettings({ store, pricing, setPricing, navigate, user }) {
   setTitle("Ustawienia");
   setActions([]);
 
   const main = el("div", { class: "container" });
+
+  if (user) {
+    main.appendChild(
+      el("div", { class: "card card--hero" }, [
+        el("div", { class: "title", text: user }),
+        el("div", { class: "row", style: "justify-content:flex-end;margin-top:10px" }, [
+          btn("Wyloguj", doLogout, "btn--ghost")
+        ])
+      ])
+    );
+  }
 
   const tiers = pricing.feeBySessionsPerWeek ?? {};
   const allValue = tiers.all !== undefined ? Number(tiers.all) : "";

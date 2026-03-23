@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b1220" />
+    <title>Logowanie — Klub</title>
+    <link rel="icon" href="./assets/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <main class="main" style="display:grid;place-items:center;min-height:100vh;">
+        <div class="container" style="max-width:520px;">
+          <div class="card card--hero">
+            <div class="stack">
+              <div class="title">Zaloguj się</div>
+              <div class="sub">Brak rejestracji. Dostęp tylko dla uprawnionych osób.</div>
+              <div class="hr"></div>
+              <form id="loginForm" class="stack">
+                <input class="input" id="username" autocomplete="username" placeholder="Użytkownik" />
+                <input class="input" id="password" type="password" autocomplete="current-password" placeholder="Hasło" />
+                <div id="error" class="pill danger" style="display:none;"></div>
+                <button class="btn btn--good" type="submit">Zaloguj</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+    <script type="module" src="./login.js"></script>
+  </body>
+</html>
+

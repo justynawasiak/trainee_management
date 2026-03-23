@@ -1,4 +1,4 @@
-const DB_NAME = "klub_db";
+const DB_NAME_BASE = "klub_db";
 const DB_VERSION = 1;
 
 function uuid() {
@@ -13,8 +13,8 @@ function withRequest(request) {
   });
 }
 
-function openDb() {
-  const request = indexedDB.open(DB_NAME, DB_VERSION);
+function openDb(dbName) {
+  const request = indexedDB.open(dbName, DB_VERSION);
   request.onupgradeneeded = () => {
     const db = request.result;
 
@@ -54,10 +54,21 @@ function tx(db, storeNames, mode, run) {
   });
 }
 
-export async function createStore() {
-  const db = await openDb();
+function sanitizeNamespace(input) {
+  return String(input ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+export async function createStore(opts = {}) {
+  const ns = sanitizeNamespace(opts.namespace);
+  const dbName = ns ? `${DB_NAME_BASE}__${ns}` : DB_NAME_BASE;
+  const db = await openDb(dbName);
   await ensureDefaults(db);
   return {
+    dbName,
     async getAll(storeName) {
       const transaction = db.transaction([storeName], "readonly");
       const store = transaction.objectStore(storeName);
