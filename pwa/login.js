@@ -17,11 +17,18 @@ form.addEventListener("submit", async (e) => {
   if (!u || !p) return showError("Podaj użytkownika i hasło.");
 
   try {
-    const res = await fetch("/api/login", {
+    let res = await fetch("/api/login", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ username: u, password: p })
     });
+    if (res.status === 404) {
+      res = await fetch("/api/login.php", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ username: u, password: p })
+      });
+    }
     if (!res.ok) return showError("Nieprawidłowy użytkownik lub hasło.");
     location.href = "/";
   } catch {

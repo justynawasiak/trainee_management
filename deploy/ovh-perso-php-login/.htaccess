@@ -1,0 +1,10 @@
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  # Block access to data files
+  RewriteRule ^data/ - [F,L]
+
+  # Route entry points through gate.php (shows login or app)
+  RewriteRule ^$ gate.php [L]
+  RewriteRule ^index\.html$ gate.php [L]
+</IfModule>

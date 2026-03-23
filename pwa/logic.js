@@ -99,3 +99,16 @@ export async function importAll(store, payload) {
     }
   });
 }
+
+export async function replaceAll(store, payload) {
+  const data = payload?.data;
+  if (!data) throw new Error("Brak danych");
+  const targets = ["trainees", "groups", "memberships", "attendance", "payments", "settings"];
+  await store.runTx(targets, "readwrite", (t) => {
+    for (const name of targets) t.objectStore(name).clear();
+    for (const name of targets) {
+      const s = t.objectStore(name);
+      for (const row of data[name] ?? []) s.put(row);
+    }
+  });
+}

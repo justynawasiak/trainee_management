@@ -77,7 +77,7 @@ async function render() {
 }
 
 async function init() {
-  // Detect authenticated user (Node server: /api/me, OVH Basic Auth: /whoami.php)
+  // Detect authenticated user (Node server: /api/me, OVH PHP session: /api/me.php)
   try {
     const res = await fetch("/api/me", { cache: "no-store" });
     if (res.status === 401) {
@@ -94,7 +94,7 @@ async function init() {
 
   if (!state.user) {
     try {
-      const res = await fetch("/whoami.php", { cache: "no-store" });
+      let res = await fetch("/api/me.php", { cache: "no-store" });
       if (res.ok) {
         const json = await res.json();
         state.user = json?.username ?? null;
@@ -106,6 +106,25 @@ async function init() {
 
   state.store = await createStore({ namespace: state.user });
   state.pricing = await state.store.get("settings", "pricing");
+
+  // Auto-pull from server on a fresh device (no trainees yet).
+  try {
+    const existing = await state.store.getAll("trainees");
+    if ((existing?.length ?? 0) === 0 && state.user) {
+      let res = await fetch("/api/sync/pull", { cache: "no-store" });
+      if (res.status === 404) res = await fetch("/api/sync_pull.php", { cache: "no-store" });
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.exists && json?.payload?.data) {
+          const { replaceAll } = await import("./logic.js");
+          await replaceAll(state.store, json.payload);
+          state.pricing = await state.store.get("settings", "pricing");
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
 
   window.addEventListener("hashchange", () => render());
 

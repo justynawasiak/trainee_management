@@ -1,9 +1,12 @@
-import { exportAll, importAll } from "../logic.js";
+import { exportAll, importAll, replaceAll } from "../logic.js";
 import { btn, el, setActions, setTitle, showToast } from "../ui.js";
 
 async function doLogout() {
   try {
-    await fetch("/api/logout", { method: "POST" });
+    let res = await fetch("/api/logout", { method: "POST" });
+    if (res.status === 404) {
+      await fetch("/api/logout.php", { method: "POST" });
+    }
   } catch {
     // ignore
   }
@@ -141,6 +144,24 @@ export async function renderSettings({ store, pricing, setPricing, navigate, use
             }
             const updatedPricing = await store.get("settings", "pricing");
             setPricing(updatedPricing);
+            // Best-effort: push imported data to server (if sync API exists)
+            try {
+              const payload = await exportAll(store);
+              let res = await fetch("/api/sync/push", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify(payload)
+              });
+              if (res.status === 404) {
+                await fetch("/api/sync_push.php", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify(payload)
+                });
+              }
+            } catch {
+              // ignore
+            }
             showToast("Zaimportowano dane");
             navigate("#/attendance");
           };
@@ -149,6 +170,64 @@ export async function renderSettings({ store, pricing, setPricing, navigate, use
       ])
     ])
   );
+
+  if (user) {
+    async function syncPull() {
+      let res = await fetch("/api/sync/pull", { cache: "no-store" });
+      if (res.status === 404) res = await fetch("/api/sync_pull.php", { cache: "no-store" });
+      if (!res.ok) {
+        showToast("Nie udało się pobrać danych");
+        return;
+      }
+      const json = await res.json();
+      if (!json?.exists || !json?.payload) {
+        showToast("Brak danych na serwerze");
+        return;
+      }
+      try {
+        await replaceAll(store, json.payload);
+      } catch (e) {
+        showToast(String(e?.message ?? e));
+        return;
+      }
+      const updatedPricing = await store.get("settings", "pricing");
+      setPricing(updatedPricing);
+      showToast("Pobrano dane");
+      navigate("#/attendance");
+    }
+
+    async function syncPush() {
+      const payload = await exportAll(store);
+      let res = await fetch("/api/sync/push", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (res.status === 404) {
+        res = await fetch("/api/sync_push.php", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+      }
+      if (!res.ok) {
+        showToast("Nie udało się wysłać danych");
+        return;
+      }
+      showToast("Wysłano dane");
+    }
+
+    main.appendChild(
+      el("div", { class: "card card--hero" }, [
+        el("div", { class: "title", text: "Synchronizacja" }),
+        el("div", { class: "hr" }),
+        el("div", { class: "row", style: "gap:8px;flex-wrap:wrap" }, [
+          btn("Pobierz", syncPull),
+          btn("Wyślij", syncPush, "btn--good")
+        ])
+      ])
+    );
+  }
 
   return main;
 }
