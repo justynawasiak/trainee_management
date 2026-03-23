@@ -2,13 +2,7 @@
 
 Prosta aplikacja mobilna do zarządzania małym klubem sportowym jest w katalogu `pwa/`.
 
-Start lokalnie:
-
-```powershell
-.\serve.ps1 -Port 5173
-```
-
-Start w WSL (bash):
+Start lokalnie (WSL / bash):
 
 ```bash
 chmod +x ./serve.sh

@@ -4,6 +4,16 @@
   # Block access to data files
   RewriteRule ^data/ - [F,L]
 
+  # Block internal PHP modules
+  RewriteRule ^api/_.*\.php$ - [F,L]
+
+  # Nice API routes (optional)
+  RewriteRule ^api/login$ api/login.php [L]
+  RewriteRule ^api/logout$ api/logout.php [L]
+  RewriteRule ^api/me$ api/me.php [L]
+  RewriteRule ^api/sync/pull$ api/sync_pull.php [L]
+  RewriteRule ^api/sync/push$ api/sync_push.php [L]
+
   # Route entry points through gate.php (shows login or app)
   RewriteRule ^$ gate.php [L]
   RewriteRule ^index\.html$ gate.php [L]
