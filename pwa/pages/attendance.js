@@ -1,5 +1,5 @@
 import { isoDate } from "../db.js";
-import { groupHasTrainingOnDate, setAttendance } from "../logic.js";
+import { getSessionScopes, groupHasTrainingOnDate, setAttendance, setSessionScopes } from "../logic.js";
 import { DAYS, bigListItem, btn, closeModal, el, fmtSchedule, iconToggle, openModal, setActions, setTitle, showToast } from "../ui.js";
 
 function isoFromParts(y, m, d) {
@@ -153,7 +153,7 @@ export async function renderAttendance({ store, now, setNow, navigate }) {
     el("div", { class: "card card--hero" }, [
       el("div", { class: "row space" }, [
         el("div", { class: "stack" }, [
-          el("div", { class: "title", text: "Obecność" }),
+          el("div", { class: "title", text: "Obecność" })
         ]),
         el("input", {
           class: "input",
@@ -265,6 +265,13 @@ export async function renderAttendanceGroup({ store, now, navigate, params }) {
   const paymentRows = await store.getAllByIndex("payments", "byMonth", month);
   const paidByTrainee = new Map(paymentRows.map((p) => [p.traineeId, Boolean(p.paid)]));
 
+  const [scopeCatalog, sessionScopeRow] = await Promise.all([
+    store.getAll("scopes"),
+    getSessionScopes(store, dateISO, groupId)
+  ]);
+  const scopesById = new Map(scopeCatalog.map((s) => [s.id, s]));
+  let selectedScopeIds = Array.isArray(sessionScopeRow?.scopeIds) ? sessionScopeRow.scopeIds.slice() : [];
+
   let search = "";
   const stats = el("div", { class: "pill pill--nowrap" });
   const list = el("div", { class: "list" });
@@ -318,13 +325,84 @@ export async function renderAttendanceGroup({ store, now, navigate, params }) {
     }
   }
 
-  main.appendChild(
-    el("div", { class: "card card--hero" }, [
+  const heroCard = el("div", { class: "card card--hero" }, [
       el("div", { class: "row space" }, [
         el("div", { class: "stack" }, [
-          el("div", { class: "title", text: group.name ?? "Grupa" }),
+          el("div", { class: "title", text: group.name ?? "Grupa" })
         ]),
-        btn("←", () => navigate("#/attendance"))
+        el("div", { class: "row", style: "gap:8px" }, [
+          btn("Zakres", () => {
+            const selected = new Set(selectedScopeIds);
+            let searchScopes = "";
+            const searchInput = el("input", {
+              class: "input",
+              type: "search",
+              placeholder: "Szukaj…",
+              oninput: (e) => {
+                searchScopes = e.target.value ?? "";
+                renderScopeList();
+              }
+            });
+            const list = el("div", { class: "checklist" });
+
+            const options = scopeCatalog.slice().sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
+            function renderScopeList() {
+              list.innerHTML = "";
+              const q = (searchScopes ?? "").trim().toLowerCase();
+              const filtered = q ? options.filter((s) => (s.name ?? "").toLowerCase().includes(q)) : options;
+              if (filtered.length === 0) {
+                list.appendChild(el("div", { class: "sub muted", text: "Brak wyników." }));
+                return;
+              }
+              for (const s of filtered) {
+                const cb = el("input", { type: "checkbox" });
+                cb.checked = selected.has(s.id);
+                const row = el("div", { class: "checkitem", role: "button", tabindex: "0" }, [
+                  cb,
+                  el("div", { class: "title", text: s.name ?? "Pozycja" })
+                ]);
+                function sync() {
+                  if (cb.checked) selected.add(s.id);
+                  else selected.delete(s.id);
+                }
+                cb.addEventListener("change", sync);
+                row.addEventListener("click", (e) => {
+                  if (e.target === cb) return;
+                  cb.checked = !cb.checked;
+                  sync();
+                });
+                row.addEventListener("keydown", (e) => {
+                  if (e.key !== "Enter" && e.key !== " ") return;
+                  e.preventDefault();
+                  cb.checked = !cb.checked;
+                  sync();
+                });
+                list.appendChild(row);
+              }
+            }
+
+            renderScopeList();
+            const body = el("div", { class: "stack" }, [searchInput, list]);
+            openModal({
+              title: "Zakres zajęć",
+              body,
+              footer: [
+                btn("Anuluj", () => closeModal(), "btn--ghost"),
+                btn(
+                  "Zapisz",
+                  async () => {
+                    selectedScopeIds = Array.from(selected);
+                    await setSessionScopes(store, dateISO, groupId, selectedScopeIds);
+                    closeModal();
+                    renderSelectedScopes();
+                  },
+                  "btn--good"
+                )
+              ]
+            });
+          }),
+          btn("←", () => navigate("#/attendance"))
+        ])
       ]),
       el("div", { class: "hr" }),
       el("div", { class: "grid2" }, [
@@ -368,7 +446,20 @@ export async function renderAttendanceGroup({ store, now, navigate, params }) {
         })
       ])
     ])
-  );
+  ;
+
+  const scopesRow = el("div", { class: "row", style: "gap:8px;flex-wrap:wrap;margin-top:10px" });
+  function renderSelectedScopes() {
+    scopesRow.innerHTML = "";
+    const names = selectedScopeIds.map((id) => scopesById.get(id)?.name).filter(Boolean);
+    if (names.length === 0) return;
+    for (const n of names.slice(0, 8)) scopesRow.appendChild(el("div", { class: "pill", text: n }));
+    if (names.length > 8) scopesRow.appendChild(el("div", { class: "pill", text: `+${names.length - 8}` }));
+  }
+  renderSelectedScopes();
+  heroCard.appendChild(scopesRow);
+
+  main.appendChild(heroCard);
 
   main.appendChild(
     el("div", { class: "card" }, [

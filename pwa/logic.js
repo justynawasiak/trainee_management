@@ -82,7 +82,7 @@ export async function setAttendance(store, dateISO, groupId, traineeId, present)
 }
 
 export async function exportAll(store) {
-  const stores = ["trainees", "groups", "memberships", "attendance", "payments", "settings"];
+  const stores = ["trainees", "groups", "memberships", "attendance", "payments", "settings", "scopes", "sessionScopes"];
   const data = {};
   for (const s of stores) data[s] = await store.getAll(s);
   return { version: 1, exportedAt: new Date().toISOString(), data };
@@ -91,8 +91,8 @@ export async function exportAll(store) {
 export async function importAll(store, payload) {
   const data = payload?.data;
   if (!data) throw new Error("Brak danych w pliku");
-  await store.runTx(["trainees", "groups", "memberships", "attendance", "payments", "settings"], "readwrite", (t) => {
-    const targets = ["trainees", "groups", "memberships", "attendance", "payments", "settings"];
+  await store.runTx(["trainees", "groups", "memberships", "attendance", "payments", "settings", "scopes", "sessionScopes"], "readwrite", (t) => {
+    const targets = ["trainees", "groups", "memberships", "attendance", "payments", "settings", "scopes", "sessionScopes"];
     for (const name of targets) {
       const s = t.objectStore(name);
       for (const row of data[name] ?? []) s.put(row);
@@ -103,7 +103,7 @@ export async function importAll(store, payload) {
 export async function replaceAll(store, payload) {
   const data = payload?.data;
   if (!data) throw new Error("Brak danych");
-  const targets = ["trainees", "groups", "memberships", "attendance", "payments", "settings"];
+  const targets = ["trainees", "groups", "memberships", "attendance", "payments", "settings", "scopes", "sessionScopes"];
   await store.runTx(targets, "readwrite", (t) => {
     for (const name of targets) t.objectStore(name).clear();
     for (const name of targets) {
@@ -111,4 +111,25 @@ export async function replaceAll(store, payload) {
       for (const row of data[name] ?? []) s.put(row);
     }
   });
+}
+
+export async function getSessionScopes(store, dateISO, groupId) {
+  return await store.getByIndex("sessionScopes", "byDateGroup", [dateISO, groupId]);
+}
+
+export async function setSessionScopes(store, dateISO, groupId, scopeIds) {
+  const existing = await store.getByIndex("sessionScopes", "byDateGroup", [dateISO, groupId]);
+  const row =
+    existing ??
+    ({
+      id: store.uuid(),
+      dateISO,
+      groupId,
+      scopeIds: [],
+      createdAt: Date.now()
+    });
+  row.scopeIds = Array.from(new Set(scopeIds ?? [])).filter(Boolean);
+  row.updatedAt = Date.now();
+  await store.put("sessionScopes", row);
+  return row;
 }

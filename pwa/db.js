@@ -1,5 +1,5 @@
 const DB_NAME_BASE = "klub_db";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 function uuid() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
@@ -17,31 +17,73 @@ function openDb(dbName) {
   const request = indexedDB.open(dbName, DB_VERSION);
   request.onupgradeneeded = () => {
     const db = request.result;
+    const t = request.transaction;
 
-    const trainees = db.createObjectStore("trainees", { keyPath: "id" });
-    trainees.createIndex("byName", ["lastName", "firstName"], { unique: false });
+    function getOrCreateStore(name, opts) {
+      if (db.objectStoreNames.contains(name)) return t.objectStore(name);
+      return db.createObjectStore(name, opts);
+    }
 
-    const groups = db.createObjectStore("groups", { keyPath: "id" });
-    groups.createIndex("byName", "name", { unique: false });
+    function ensureIndex(store, indexName, keyPath, options) {
+      if (store.indexNames.contains(indexName)) return;
+      store.createIndex(indexName, keyPath, options);
+    }
 
-    const memberships = db.createObjectStore("memberships", { keyPath: "id" });
-    memberships.createIndex("byGroup", "groupId", { unique: false });
-    memberships.createIndex("byTrainee", "traineeId", { unique: false });
-    memberships.createIndex("byGroupTrainee", ["groupId", "traineeId"], { unique: true });
+    const trainees = getOrCreateStore("trainees", { keyPath: "id" });
+    ensureIndex(trainees, "byName", ["lastName", "firstName"], { unique: false });
 
-    const attendance = db.createObjectStore("attendance", { keyPath: "id" });
-    attendance.createIndex("byDateGroup", ["dateISO", "groupId"], { unique: false });
-    attendance.createIndex("byDateGroupTrainee", ["dateISO", "groupId", "traineeId"], { unique: true });
-    attendance.createIndex("byTrainee", "traineeId", { unique: false });
+    const groups = getOrCreateStore("groups", { keyPath: "id" });
+    ensureIndex(groups, "byName", "name", { unique: false });
 
-    const payments = db.createObjectStore("payments", { keyPath: "id" });
-    payments.createIndex("byMonthTrainee", ["month", "traineeId"], { unique: true });
-    payments.createIndex("byMonth", "month", { unique: false });
+    const memberships = getOrCreateStore("memberships", { keyPath: "id" });
+    ensureIndex(memberships, "byGroup", "groupId", { unique: false });
+    ensureIndex(memberships, "byTrainee", "traineeId", { unique: false });
+    ensureIndex(memberships, "byGroupTrainee", ["groupId", "traineeId"], { unique: true });
 
-    db.createObjectStore("settings", { keyPath: "key" });
+    const attendance = getOrCreateStore("attendance", { keyPath: "id" });
+    ensureIndex(attendance, "byDateGroup", ["dateISO", "groupId"], { unique: false });
+    ensureIndex(attendance, "byDateGroupTrainee", ["dateISO", "groupId", "traineeId"], { unique: true });
+    ensureIndex(attendance, "byTrainee", "traineeId", { unique: false });
+
+    const payments = getOrCreateStore("payments", { keyPath: "id" });
+    ensureIndex(payments, "byMonthTrainee", ["month", "traineeId"], { unique: true });
+    ensureIndex(payments, "byMonth", "month", { unique: false });
+
+    const scopes = getOrCreateStore("scopes", { keyPath: "id" });
+    ensureIndex(scopes, "byName", "name", { unique: false });
+
+    const sessionScopes = getOrCreateStore("sessionScopes", { keyPath: "id" });
+    ensureIndex(sessionScopes, "byDateGroup", ["dateISO", "groupId"], { unique: true });
+
+    getOrCreateStore("settings", { keyPath: "key" });
   };
 
-  return withRequest(request);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error("Nie mogę otworzyć bazy danych. Zamknij inne karty z aplikacją i odśwież."));
+    }, 8000);
+
+    request.onsuccess = () => {
+      clearTimeout(timer);
+      const db = request.result;
+      db.onversionchange = () => {
+        try {
+          db.close();
+        } catch {
+          // ignore
+        }
+      };
+      resolve(db);
+    };
+    request.onerror = () => {
+      clearTimeout(timer);
+      reject(request.error ?? new Error("IndexedDB error"));
+    };
+    request.onblocked = () => {
+      clearTimeout(timer);
+      reject(new Error("Aktualizacja bazy jest zablokowana (inna karta/urządzenie ma otwartą aplikację). Zamknij ją i odśwież."));
+    };
+  });
 }
 
 function tx(db, storeNames, mode, run) {
@@ -119,8 +161,9 @@ export async function createStore(opts = {}) {
 }
 
 async function ensureDefaults(db) {
-  const transaction = db.transaction(["settings", "attendance", "payments"], "readwrite");
+  const transaction = db.transaction(["settings", "attendance", "payments", "scopes"], "readwrite");
   const settings = transaction.objectStore("settings");
+  const scopes = transaction.objectStore("scopes");
 
   const existingPricing = await withRequest(settings.get("pricing")).catch(() => undefined);
   if (!existingPricing) {
@@ -136,6 +179,21 @@ async function ensureDefaults(db) {
       }
     };
     await withRequest(settings.put(pricing));
+  }
+
+  // Default scope catalog
+  const scopesCount = await withRequest(scopes.count()).catch(() => 0);
+  if (!scopesCount) {
+    const defaults = [
+      { name: "Rozgrzewka" },
+      { name: "Technika" },
+      { name: "Taktyka" },
+      { name: "Sparing" },
+      { name: "Motoryka" }
+    ];
+    for (const s of defaults) {
+      await withRequest(scopes.put({ id: uuid(), name: s.name, createdAt: Date.now() }));
+    }
   }
 
   // One-time maintenance: clear attendance + payments (keep people/groups/memberships).

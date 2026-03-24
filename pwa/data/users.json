@@ -1,0 +1,10 @@
+{
+    "version": 1,
+    "users": [
+        {
+            "username": "Justyna",
+            "passwordHash": "$2y$10$Klvtfbzs.ZyVk.7OsLnwuuicXI7Rc4w2Tged0ga/0zuIFTX9s9FYy",
+            "createdAt": 1774369080
+        }
+    ]
+}

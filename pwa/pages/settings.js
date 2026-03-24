@@ -1,5 +1,5 @@
 import { exportAll, importAll, replaceAll } from "../logic.js";
-import { btn, el, setActions, setTitle, showToast } from "../ui.js";
+import { btn, closeModal, el, openModal, setActions, setTitle, showModalError, showToast } from "../ui.js";
 
 async function doLogout() {
   try {
@@ -44,6 +44,16 @@ export async function renderSettings({ store, pricing, setPricing, navigate, use
         el("div", { class: "title", text: user }),
         el("div", { class: "row", style: "justify-content:flex-end;margin-top:10px" }, [
           btn("Wyloguj", doLogout, "btn--ghost")
+        ])
+      ])
+    );
+  } else {
+    main.appendChild(
+      el("div", { class: "card card--hero" }, [
+        el("div", { class: "title", text: "Logowanie" }),
+        el("div", { class: "sub", text: "Jeśli jesteś na serwerze (PHP), zaloguj się tutaj." }),
+        el("div", { class: "row", style: "justify-content:flex-end;margin-top:10px" }, [
+          el("a", { class: "btn btn--primary", href: "/login.html", text: "Zaloguj" })
         ])
       ])
     );
@@ -105,6 +115,71 @@ export async function renderSettings({ store, pricing, setPricing, navigate, use
           "btn--good"
         )
       ])
+    ])
+  );
+
+  async function openScopeEditor(scopeId) {
+    const scope = scopeId ? await store.get("scopes", scopeId) : null;
+    const name = el("input", { class: "input", placeholder: "Nazwa", value: scope?.name ?? "" });
+
+    openModal({
+      title: scope ? "Edytuj zakres" : "Dodaj zakres",
+      body: el("div", { class: "stack" }, [name]),
+      footer: [
+        scope
+          ? btn("Usuń", async () => {
+              await store.delete("scopes", scope.id);
+              closeModal();
+              navigate("#/settings");
+            })
+          : null,
+        el("button", { class: "btn", value: "cancel", text: "Anuluj" }),
+        btn(
+          "Zapisz",
+          async (e) => {
+            e.preventDefault();
+            const n = (name.value ?? "").trim();
+            if (!n) {
+              showModalError("Podaj nazwę");
+              name.focus();
+              return;
+            }
+            const row = scope ?? { id: store.uuid(), createdAt: Date.now() };
+            row.name = n;
+            row.updatedAt = Date.now();
+            await store.put("scopes", row);
+            closeModal();
+            navigate("#/settings");
+          },
+          "btn--good"
+        )
+      ].filter(Boolean)
+    });
+  }
+
+  const scopes = (await store.getAll("scopes"))
+    .slice()
+    .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
+
+  main.appendChild(
+    el("div", { class: "card card--hero" }, [
+      el("div", { class: "row space" }, [
+        el("div", { class: "title", text: "Zakres zajęć" }),
+        btn("Dodaj", () => openScopeEditor(), "btn--primary")
+      ]),
+      el("div", { class: "hr" }),
+      scopes.length
+        ? el(
+            "div",
+            { class: "list" },
+            scopes.map((s) =>
+              el("div", { class: "item", role: "button", tabindex: "0", onclick: () => openScopeEditor(s.id) }, [
+                el("div", { class: "title", text: s.name ?? "Pozycja" }),
+                el("div", { class: "sub muted", text: "›" })
+              ])
+            )
+          )
+        : el("div", { class: "sub muted", text: "Brak." })
     ])
   );
 

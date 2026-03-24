@@ -219,6 +219,10 @@ async function init() {
   if (!state.user) {
     try {
       let res = await fetch("/api/me.php", { cache: "no-store" });
+      if (res.status === 401) {
+        location.replace("/login.html");
+        return;
+      }
       if (res.ok) {
         const json = await res.json();
         state.user = json?.username ?? null;
