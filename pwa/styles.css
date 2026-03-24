@@ -533,6 +533,24 @@ input[type="time"]::-webkit-calendar-picker-indicator {
   background: rgba(255, 255, 255, 0.92);
 }
 
+.paydot {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  flex: 0 0 auto;
+}
+
+.paydot--paid {
+  background: rgba(52, 211, 153, 0.92);
+  border-color: rgba(52, 211, 153, 0.55);
+}
+
+.paydot--unpaid {
+  background: rgba(251, 113, 133, 0.9);
+  border-color: rgba(251, 113, 133, 0.55);
+}
+
 .modal {
   border: none;
   padding: 0;

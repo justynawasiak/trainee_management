@@ -19,7 +19,7 @@ export async function renderPeople({ store, pricing, navigate }) {
       .slice()
       .sort(
         (a, b) =>
-          (a.lastName ?? "").localeCompare(b.lastName ?? "") || (a.firstName ?? "").localeCompare(b.firstName ?? "")
+          (a.firstName ?? "").localeCompare(b.firstName ?? "") || (a.lastName ?? "").localeCompare(b.lastName ?? "")
       )
       .filter((t) => {
         if (!q) return true;
@@ -33,7 +33,7 @@ export async function renderPeople({ store, pricing, navigate }) {
     for (const t of filtered) {
       list.appendChild(
         bigListItem({
-          title: `${t.lastName ?? ""} ${t.firstName ?? ""}`.trim() || "Osoba",
+          title: `${t.firstName ?? ""} ${t.lastName ?? ""}`.trim() || "Osoba",
           subtitle: t.phone || t.email ? `${t.phone ?? ""}${t.phone && t.email ? " · " : ""}${t.email ?? ""}` : null,
           onClick: () => openTraineeEditor({ store, pricing, navigate }, t.id)
         })

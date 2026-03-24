@@ -88,7 +88,7 @@ export async function renderGroupDetail({ store, navigate, params }) {
     .sort((a, b) => {
       const ta = traineeById.get(a.traineeId);
       const tb = traineeById.get(b.traineeId);
-      return (ta?.lastName ?? "").localeCompare(tb?.lastName ?? "") || (ta?.firstName ?? "").localeCompare(tb?.firstName ?? "");
+      return (ta?.firstName ?? "").localeCompare(tb?.firstName ?? "") || (ta?.lastName ?? "").localeCompare(tb?.lastName ?? "");
     });
 
   main.appendChild(
@@ -172,7 +172,7 @@ async function renderMembersCard({ store, navigate, groupId, trainees, roster })
       membersList.appendChild(
         el("div", { class: "item" }, [
           el("div", { class: "stack" }, [
-            el("div", { class: "title", text: `${t.lastName ?? ""} ${t.firstName ?? ""}`.trim() }),
+            el("div", { class: "title", text: `${t.firstName ?? ""} ${t.lastName ?? ""}`.trim() }),
             el("div", { class: "sub", text: `Treningi/tydzień: ${Number(m.sessionsPerWeek ?? 0)}` })
           ]),
           el("div", { class: "row", style: "gap:8px;justify-content:flex-end" }, [
@@ -294,7 +294,7 @@ async function openAddMember(ctx, groupId) {
   const existing = new Set(memberships.map((m) => m.traineeId));
   const options = trainees
     .filter((t) => !existing.has(t.id))
-    .sort((a, b) => (a.lastName ?? "").localeCompare(b.lastName ?? "") || (a.firstName ?? "").localeCompare(b.firstName ?? ""));
+    .sort((a, b) => (a.firstName ?? "").localeCompare(b.firstName ?? "") || (a.lastName ?? "").localeCompare(b.lastName ?? ""));
 
   if (options.length === 0) {
     showToast("Brak osób do dodania");
@@ -328,7 +328,7 @@ async function openAddMember(ctx, groupId) {
     }
 
     for (const t of filtered) {
-      const name = `${t.lastName ?? ""} ${t.firstName ?? ""}`.trim();
+      const name = `${t.firstName ?? ""} ${t.lastName ?? ""}`.trim();
       const cb = el("input", { type: "checkbox" });
       cb.checked = selected.has(t.id);
       const row = el("div", { class: "checkitem", role: "button", tabindex: "0" }, [
@@ -415,7 +415,7 @@ async function openEditMemberSessions(ctx, membershipId) {
   const trainee = await store.get("trainees", membership.traineeId);
   const sessions = el("input", { class: "input", type: "number", min: "0", step: "1", value: String(Number(membership.sessionsPerWeek ?? 0)) });
   const body = el("div", { class: "stack" }, [
-    el("div", { class: "title", text: trainee ? `${trainee.lastName ?? ""} ${trainee.firstName ?? ""}`.trim() : "Osoba" }),
+    el("div", { class: "title", text: trainee ? `${trainee.firstName ?? ""} ${trainee.lastName ?? ""}`.trim() : "Osoba" }),
     sessions,
   ]);
   const footer = [

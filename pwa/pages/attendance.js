@@ -138,6 +138,16 @@ export async function renderAttendance({ store, now, setNow, navigate }) {
 
   const [groups, trainees] = await Promise.all([store.getAll("groups"), store.getAll("trainees")]);
   const todayGroups = groups.filter((g) => groupHasTrainingOnDate(g, now));
+  const todayDow = ((now.getDay() + 6) % 7) + 1; // Mon=1..Sun=7
+
+  function firstStartTimeForToday(group) {
+    const times = (group?.schedule ?? [])
+      .filter((e) => Number(e.dayOfWeek) === todayDow && e.startTime)
+      .map((e) => String(e.startTime));
+    if (times.length === 0) return null;
+    times.sort((a, b) => a.localeCompare(b));
+    return times[0];
+  }
 
   main.appendChild(
     el("div", { class: "card card--hero" }, [
@@ -190,7 +200,16 @@ export async function renderAttendance({ store, now, setNow, navigate }) {
       ])
     );
   }
-  for (const g of useGroups.sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""))) {
+  const sortedGroups = useGroups.slice().sort((a, b) => {
+    if (todayGroups.length > 0) {
+      const ta = firstStartTimeForToday(a) ?? "99:99";
+      const tb = firstStartTimeForToday(b) ?? "99:99";
+      return ta.localeCompare(tb) || (a.name ?? "").localeCompare(b.name ?? "");
+    }
+    return (a.name ?? "").localeCompare(b.name ?? "");
+  });
+
+  for (const g of sortedGroups) {
     list.appendChild(
       bigListItem({
         title: g.name ?? "Grupa",
@@ -236,11 +255,15 @@ export async function renderAttendanceGroup({ store, now, navigate, params }) {
     .filter(Boolean)
     .sort(
       (a, b) =>
-        (a.lastName ?? "").localeCompare(b.lastName ?? "") || (a.firstName ?? "").localeCompare(b.firstName ?? "")
+        (a.firstName ?? "").localeCompare(b.firstName ?? "") || (a.lastName ?? "").localeCompare(b.lastName ?? "")
     );
 
   const attendanceRows = await store.getAllByIndex("attendance", "byDateGroup", [dateISO, groupId]);
   const presentByTrainee = new Map(attendanceRows.map((r) => [r.traineeId, Boolean(r.present)]));
+
+  const month = String(dateISO).slice(0, 7);
+  const paymentRows = await store.getAllByIndex("payments", "byMonth", month);
+  const paidByTrainee = new Map(paymentRows.map((p) => [p.traineeId, Boolean(p.paid)]));
 
   let search = "";
   const stats = el("div", { class: "pill pill--nowrap" });
@@ -267,16 +290,26 @@ export async function renderAttendanceGroup({ store, now, navigate, params }) {
 
     for (const t of filtered) {
       const isOn = presentByTrainee.get(t.id) ?? false;
-      const right = iconToggle(isOn);
+      const paid = paidByTrainee.get(t.id) ?? false;
+      const rightToggle = iconToggle(isOn);
+      const payDot = el("div", {
+        class: `paydot ${paid ? "paydot--paid" : "paydot--unpaid"}`,
+        title: paid ? "Opłacone" : "Nieopłacone",
+        "aria-hidden": "true"
+      });
+      const right = el("div", { class: "row", style: "gap:8px;align-items:center;justify-content:flex-end" }, [
+        payDot,
+        rightToggle
+      ]);
       list.appendChild(
         bigListItem({
-          title: `${t.lastName ?? ""} ${t.firstName ?? ""}`.trim() || "Osoba",
+          title: `${t.firstName ?? ""} ${t.lastName ?? ""}`.trim() || "Osoba",
           subtitle: t.phone || t.email ? `${t.phone ?? ""}${t.phone && t.email ? " · " : ""}${t.email ?? ""}` : null,
           right,
           onClick: async () => {
             const next = !(presentByTrainee.get(t.id) ?? false);
             presentByTrainee.set(t.id, next);
-            right.classList.toggle("on", next);
+            rightToggle.classList.toggle("on", next);
             updateStats();
             await setAttendance(store, dateISO, groupId, t.id, next);
           }

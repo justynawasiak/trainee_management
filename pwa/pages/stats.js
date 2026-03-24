@@ -106,7 +106,7 @@ export async function renderStats({ store, pricing, now, navigate }) {
 
   const sorted = trainees
     .slice()
-    .sort((a, b) => (a.lastName ?? "").localeCompare(b.lastName ?? "") || (a.firstName ?? "").localeCompare(b.firstName ?? ""));
+    .sort((a, b) => (a.firstName ?? "").localeCompare(b.firstName ?? "") || (a.lastName ?? "").localeCompare(b.lastName ?? ""));
 
   let selectedId = "__all__";
   let range = "30d";
@@ -122,7 +122,7 @@ export async function renderStats({ store, pricing, now, navigate }) {
     },
     [
       el("option", { value: "__all__", text: "Wszyscy" }),
-      ...sorted.map((t) => el("option", { value: t.id, text: `${t.lastName ?? ""} ${t.firstName ?? ""}`.trim() || "Osoba" }))
+      ...sorted.map((t) => el("option", { value: t.id, text: `${t.firstName ?? ""} ${t.lastName ?? ""}`.trim() || "Osoba" }))
     ]
   );
 
@@ -278,7 +278,7 @@ export async function renderStats({ store, pricing, now, navigate }) {
       ]);
 
       const top = sorted
-        .map((t) => ({ id: t.id, name: `${t.lastName ?? ""} ${t.firstName ?? ""}`.trim(), overdue: overdueCountByTrainee.get(t.id) ?? 0 }))
+        .map((t) => ({ id: t.id, name: `${t.firstName ?? ""} ${t.lastName ?? ""}`.trim(), overdue: overdueCountByTrainee.get(t.id) ?? 0 }))
         .sort((a, b) => b.overdue - a.overdue || a.name.localeCompare(b.name))
         .slice(0, 8)
         .filter((x) => x.overdue > 0);

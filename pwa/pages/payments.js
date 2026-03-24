@@ -9,11 +9,23 @@ export async function renderPayments({ store, pricing, now, navigate }) {
   const main = el("div", { class: "container" });
   const month = isoMonth(now);
 
-  const trainees = await store.getAll("trainees");
+  const [trainees, groups, memberships] = await Promise.all([
+    store.getAll("trainees"),
+    store.getAll("groups"),
+    store.getAll("memberships")
+  ]);
 
   let filterUnpaid = true;
   let search = "";
   let selectedMonth = month;
+  let groupFilter = "__all__";
+
+  const traineesInGroup = new Map();
+  for (const m of memberships) {
+    if (!m.groupId || !m.traineeId) continue;
+    if (!traineesInGroup.has(m.groupId)) traineesInGroup.set(m.groupId, new Set());
+    traineesInGroup.get(m.groupId).add(m.traineeId);
+  }
 
   const list = el("div", { class: "list" });
 
@@ -27,7 +39,7 @@ export async function renderPayments({ store, pricing, now, navigate }) {
     });
 
     openModal({
-      title: `${trainee.lastName ?? ""} ${trainee.firstName ?? ""}`.trim() || "Kwota",
+      title: `${trainee.firstName ?? ""} ${trainee.lastName ?? ""}`.trim() || "Kwota",
       body: el("div", { class: "stack" }, [
         el("div", { class: "sub", text: `Miesiąc: ${selectedMonth}` }),
         el("div", { class: "sub", text: `Domyślna: ${fmtMoney(defaultAmount, pricing.currency)}` }),
@@ -62,7 +74,7 @@ export async function renderPayments({ store, pricing, now, navigate }) {
       .slice()
       .sort(
         (a, b) =>
-          (a.lastName ?? "").localeCompare(b.lastName ?? "") || (a.firstName ?? "").localeCompare(b.firstName ?? "")
+          (a.firstName ?? "").localeCompare(b.firstName ?? "") || (a.lastName ?? "").localeCompare(b.lastName ?? "")
       );
 
     const rows = [];
@@ -81,12 +93,17 @@ export async function renderPayments({ store, pricing, now, navigate }) {
       return `${t.firstName ?? ""} ${t.lastName ?? ""}`.toLowerCase().includes(q);
     });
 
-    if (filtered.length === 0) {
+    const groupFiltered =
+      groupFilter === "__all__"
+        ? filtered
+        : filtered.filter(({ t }) => traineesInGroup.get(groupFilter)?.has(t.id));
+
+    if (groupFiltered.length === 0) {
       list.appendChild(el("div", { class: "card" }, [el("div", { class: "sub", text: "Brak wyników." })]));
       return;
     }
 
-    for (const { t, p, defaultAmount, paymentAmount } of filtered) {
+    for (const { t, p, defaultAmount, paymentAmount } of groupFiltered) {
       const rightToggle = iconToggle(Boolean(p.paid));
       const changed = Number(paymentAmount) !== Number(defaultAmount);
       const subtitle = [
@@ -112,7 +129,7 @@ export async function renderPayments({ store, pricing, now, navigate }) {
       ]);
       list.appendChild(
         bigListItem({
-          title: `${t.lastName ?? ""} ${t.firstName ?? ""}`.trim() || "Osoba",
+          title: `${t.firstName ?? ""} ${t.lastName ?? ""}`.trim() || "Osoba",
           subtitle,
           right,
           onClick: async () => {
@@ -147,21 +164,40 @@ export async function renderPayments({ store, pricing, now, navigate }) {
         })
       ]),
       el("div", { class: "hr" }),
-      el("div", { class: "grid2" }, [
-        el("input", {
-          class: "input",
-          type: "search",
-          placeholder: "Szukaj osoby…",
-          oninput: (e) => {
-            search = e.target.value ?? "";
+      el("div", { class: "stack", style: "gap:8px" }, [
+        el(
+          "select",
+          {
+            class: "input",
+            onchange: (e) => {
+              groupFilter = e.target.value;
+              renderList();
+            }
+          },
+          [
+            el("option", { value: "__all__", text: "Wszystkie osoby" }),
+            ...groups
+              .slice()
+              .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""))
+              .map((g) => el("option", { value: g.id, text: g.name ?? "Grupa" }))
+          ]
+        ),
+        el("div", { class: "grid2" }, [
+          el("input", {
+            class: "input",
+            type: "search",
+            placeholder: "Szukaj osoby…",
+            oninput: (e) => {
+              search = e.target.value ?? "";
+              renderList();
+            }
+          }),
+          btn("Pokaż: nieopłacone", (e) => {
+            filterUnpaid = !filterUnpaid;
+            e.target.textContent = filterUnpaid ? "Pokaż: nieopłacone" : "Pokaż: wszystkie";
             renderList();
-          }
-        }),
-        btn("Pokaż: nieopłacone", (e) => {
-          filterUnpaid = !filterUnpaid;
-          e.target.textContent = filterUnpaid ? "Pokaż: nieopłacone" : "Pokaż: wszystkie";
-          renderList();
-        })
+          })
+        ])
       ])
     ])
   );
