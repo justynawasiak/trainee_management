@@ -196,20 +196,6 @@ async function ensureDefaults(db) {
     }
   }
 
-  // One-time maintenance: clear attendance + payments (keep people/groups/memberships).
-  const maintenanceKey = "maintenance_clear_attendance_payments_v1";
-  const done = await withRequest(settings.get(maintenanceKey)).catch(() => undefined);
-  if (!done) {
-    await withRequest(transaction.objectStore("attendance").clear());
-    await withRequest(transaction.objectStore("payments").clear());
-    await withRequest(
-      settings.put({
-        key: maintenanceKey,
-        doneAt: Date.now()
-      })
-    );
-  }
-
   await new Promise((resolve, reject) => {
     transaction.oncomplete = resolve;
     transaction.onerror = () => reject(transaction.error ?? new Error("Settings tx error"));

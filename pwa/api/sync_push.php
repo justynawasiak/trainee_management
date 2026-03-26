@@ -8,6 +8,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
   json_response(405, ['ok' => false]);
 }
 
+require_same_origin_post();
 $body = read_json_body();
 if (!is_array($body)) {
   json_response(400, ['ok' => false, 'error' => 'bad_json']);
@@ -24,6 +25,13 @@ if (strlen($encoded) > 2 * 1024 * 1024) {
 
 if (!isset($body['version']) || !isset($body['data']) || !is_array($body['data'])) {
   json_response(400, ['ok' => false, 'error' => 'bad_payload']);
+}
+
+$allowedStores = ['trainees', 'groups', 'memberships', 'attendance', 'payments', 'settings', 'scopes', 'sessionScopes'];
+foreach ($allowedStores as $storeName) {
+  if (isset($body['data'][$storeName]) && !is_array($body['data'][$storeName])) {
+    json_response(400, ['ok' => false, 'error' => 'bad_payload']);
+  }
 }
 
 $dir = dirname(__DIR__) . '/data';
@@ -49,5 +57,6 @@ if ($ok === false) {
   json_response(500, ['ok' => false, 'error' => 'write_failed']);
 }
 @rename($tmp, $file);
+@chmod($file, 0600);
 
 json_response(200, ['ok' => true, 'updatedAt' => $updatedAt]);

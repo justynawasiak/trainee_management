@@ -88,9 +88,14 @@ export async function exportAll(store) {
   return { version: 1, exportedAt: new Date().toISOString(), data };
 }
 
+export function normalizeImportPayload(payload) {
+  if (payload?.data) return payload;
+  if (payload?.payload?.data) return payload.payload;
+  throw new Error("Brak danych w pliku");
+}
+
 export async function importAll(store, payload) {
-  const data = payload?.data;
-  if (!data) throw new Error("Brak danych w pliku");
+  const data = normalizeImportPayload(payload).data;
   await store.runTx(["trainees", "groups", "memberships", "attendance", "payments", "settings", "scopes", "sessionScopes"], "readwrite", (t) => {
     const targets = ["trainees", "groups", "memberships", "attendance", "payments", "settings", "scopes", "sessionScopes"];
     for (const name of targets) {
@@ -101,8 +106,7 @@ export async function importAll(store, payload) {
 }
 
 export async function replaceAll(store, payload) {
-  const data = payload?.data;
-  if (!data) throw new Error("Brak danych");
+  const data = normalizeImportPayload(payload).data;
   const targets = ["trainees", "groups", "memberships", "attendance", "payments", "settings", "scopes", "sessionScopes"];
   await store.runTx(targets, "readwrite", (t) => {
     for (const name of targets) t.objectStore(name).clear();

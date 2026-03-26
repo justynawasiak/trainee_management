@@ -16,6 +16,8 @@ chmod +x ./serve-php.sh
 ./serve-php.sh --port 5173
 ```
 
+Przy lokalnym starcie przez `localhost` aplikacja moze automatycznie utworzyc domyslne konta testowe, jesli nie istnieje `pwa/data/users.json`. Na serwerze produkcyjnym ten mechanizm jest wylaczony.
+
 Utworzenie lokalnego uzytkownika:
 
 ```bash

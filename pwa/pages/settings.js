@@ -1,4 +1,4 @@
-import { exportAll, importAll, replaceAll } from "../logic.js";
+import { exportAll, replaceAll } from "../logic.js";
 import { btn, closeModal, el, openModal, setActions, setTitle, showModalError, showToast } from "../ui.js";
 
 async function doLogout() {
@@ -212,7 +212,7 @@ export async function renderSettings({ store, pricing, setPricing, navigate, use
               return;
             }
             try {
-              await importAll(store, json);
+              await replaceAll(store, json);
             } catch (err) {
               showToast(String(err?.message ?? err));
               return;
@@ -237,7 +237,7 @@ export async function renderSettings({ store, pricing, setPricing, navigate, use
             } catch {
               // ignore
             }
-            showToast("Zaimportowano dane");
+            showToast("Zaimportowano dane z pliku");
             navigate("#/attendance");
           };
           input.click();

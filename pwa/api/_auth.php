@@ -13,6 +13,7 @@ function ensure_users_dir() {
 }
 
 function ensure_default_users_file() {
+  if (!is_local_runtime()) return;
   ensure_users_dir();
   $file = users_file_path();
   if (file_exists($file)) return;
@@ -37,6 +38,7 @@ function ensure_default_users_file() {
 
 function load_users() {
   ensure_default_users_file();
+  if (!file_exists(users_file_path())) return [];
   $raw = @file_get_contents(users_file_path());
   if ($raw === false) return [];
   $json = json_decode($raw, true);
@@ -59,6 +61,8 @@ function verify_user($username, $password) {
 
 function session_boot() {
   $secure = is_https();
+  ini_set('session.use_strict_mode', '1');
+  ini_set('session.use_only_cookies', '1');
   if (PHP_VERSION_ID >= 70300) {
     session_set_cookie_params([
       'lifetime' => 60 * 60 * 24 * 7,

@@ -141,12 +141,12 @@ function computeTraineeAttendanceStats({ traineeId, memberships, groupById, pres
   return { present, total };
 }
 
-function svgBars({ labels, values, color }) {
+function svgBars({ labels, values, color, maxValue }) {
   const width = 360;
   const height = 120;
   const pad = 10;
   const barWidth = (width - pad * 2) / Math.max(1, values.length);
-  const max = Math.max(1, ...values);
+  const max = Math.max(1, Number(maxValue ?? 0) || 0, ...values);
 
   const bars = values
     .map((value, index) => {
@@ -205,7 +205,8 @@ function appendPaymentCard(bodyRoot, title, description, rows, color) {
     svgBars({
       labels: visibleRows.map((row) => row.month.slice(5)),
       values: visibleRows.map((row) => row.pct),
-      color
+      color,
+      maxValue: 100
     })
   );
 
@@ -376,7 +377,7 @@ export async function renderStats({ store, pricing, now, navigate }) {
       } else {
         const labels = groupRows.slice(0, 8).map((item) => (item.name.length > 10 ? `${item.name.slice(0, 10)}...` : item.name));
         const values = groupRows.slice(0, 8).map((item) => item.pct);
-        attendanceByGroupCard.insertAdjacentHTML("beforeend", svgBars({ labels, values, color: "rgba(96,165,250,0.55)" }));
+        attendanceByGroupCard.insertAdjacentHTML("beforeend", svgBars({ labels, values, color: "rgba(96,165,250,0.55)", maxValue: 100 }));
 
         const list = el("div", { class: "list", style: "margin-top:10px" });
         groupRows.forEach((item) => {
@@ -492,7 +493,8 @@ export async function renderStats({ store, pricing, now, navigate }) {
           svgBars({
             labels: groupPaymentRows.slice(0, 8).map((item) => (item.name.length > 10 ? `${item.name.slice(0, 10)}...` : item.name)),
             values: groupPaymentRows.slice(0, 8).map((item) => item.pct),
-            color: "rgba(251,191,36,0.55)"
+            color: "rgba(251,191,36,0.55)",
+            maxValue: 100
           })
         );
 

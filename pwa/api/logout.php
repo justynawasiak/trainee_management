@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/_auth.php';
 
+require_same_origin_post();
 session_boot();
 $_SESSION = [];
 
@@ -11,4 +12,3 @@ if (ini_get('session.use_cookies')) {
 
 session_destroy();
 json_response(200, ['ok' => true]);
-

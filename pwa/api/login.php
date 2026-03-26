@@ -5,6 +5,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
   json_response(405, ['ok' => false]);
 }
 
+require_same_origin_post();
 rate_check_or_429();
 
 $body = read_json_body();
@@ -29,4 +30,3 @@ session_regenerate_id(true);
 $_SESSION['username'] = $u;
 
 json_response(200, ['ok' => true, 'username' => $u]);
-
