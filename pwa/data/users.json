@@ -3,8 +3,9 @@
     "users": [
         {
             "username": "Justyna",
-            "passwordHash": "$2y$10$Klvtfbzs.ZyVk.7OsLnwuuicXI7Rc4w2Tged0ga/0zuIFTX9s9FYy",
-            "createdAt": 1774369080
+            "passwordHash": "$2y$10$4yOyGGasMlGNZmInoeWQ3u.QDyqepdej4FW42PU912VP5F3p3zQdC",
+            "createdAt": 1774369080,
+            "updatedAt": 1774522310
         }
     ]
 }

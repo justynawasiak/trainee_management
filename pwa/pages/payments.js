@@ -20,6 +20,16 @@ export async function renderPayments({ store, pricing, now, navigate }) {
   let selectedMonth = month;
   let groupFilter = "__all__";
 
+  function getSelectedMonthParts() {
+    const [year, monthNum] = String(selectedMonth).split("-").map((x) => Number(x));
+    return { year, monthNum };
+  }
+
+  function setSelectedMonth(year, monthNum) {
+    selectedMonth = `${year}-${String(monthNum).padStart(2, "0")}`;
+    renderList();
+  }
+
   const traineesInGroup = new Map();
   for (const m of memberships) {
     if (!m.groupId || !m.traineeId) continue;
@@ -28,6 +38,44 @@ export async function renderPayments({ store, pricing, now, navigate }) {
   }
 
   const list = el("div", { class: "list" });
+  const monthParts = getSelectedMonthParts();
+  const currentYear = new Date().getFullYear();
+  const monthSelect = el(
+    "select",
+    {
+      class: "input",
+      onchange: (e) => setSelectedMonth(getSelectedMonthParts().year, Number(e.target.value))
+    },
+    [
+      el("option", { value: "1", text: "Styczen" }),
+      el("option", { value: "2", text: "Luty" }),
+      el("option", { value: "3", text: "Marzec" }),
+      el("option", { value: "4", text: "Kwiecien" }),
+      el("option", { value: "5", text: "Maj" }),
+      el("option", { value: "6", text: "Czerwiec" }),
+      el("option", { value: "7", text: "Lipiec" }),
+      el("option", { value: "8", text: "Sierpien" }),
+      el("option", { value: "9", text: "Wrzesien" }),
+      el("option", { value: "10", text: "Pazdziernik" }),
+      el("option", { value: "11", text: "Listopad" }),
+      el("option", { value: "12", text: "Grudzien" })
+    ]
+  );
+  monthSelect.value = String(monthParts.monthNum);
+
+  const yearOptions = [];
+  for (let year = currentYear - 3; year <= currentYear + 3; year++) {
+    yearOptions.push(el("option", { value: String(year), text: String(year) }));
+  }
+  const yearSelect = el(
+    "select",
+    {
+      class: "input",
+      onchange: (e) => setSelectedMonth(Number(e.target.value), getSelectedMonthParts().monthNum)
+    },
+    yearOptions
+  );
+  yearSelect.value = String(monthParts.year);
 
   function openAmountModal({ trainee, payment, defaultAmount }) {
     const input = el("input", {
@@ -149,19 +197,10 @@ export async function renderPayments({ store, pricing, now, navigate }) {
         el("div", { class: "stack" }, [
           el("div", { class: "title", text: "Płatności" }),
         ]),
-        el("input", {
-          class: "input",
-          type: "month",
-          value: month,
-          style: "max-width: 180px",
-          onchange: (e) => {
-            const value = e.target.value;
-            if (value) {
-              selectedMonth = value;
-              renderList();
-            }
-          }
-        })
+        el("div", { class: "grid2", style: "flex:0 0 auto;min-width:min(320px,100%);width:min(360px,100%)" }, [
+          monthSelect,
+          yearSelect
+        ])
       ]),
       el("div", { class: "hr" }),
       el("div", { class: "stack", style: "gap:8px" }, [

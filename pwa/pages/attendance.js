@@ -61,7 +61,22 @@ function trainingDaysInMonth(group, viewMonthDate) {
   return out;
 }
 
-function calendar({ group, selectedISO, onSelect }) {
+function allTrainingDaysInMonth(groups, viewMonthDate) {
+  const out = new Set();
+  for (const group of groups ?? []) {
+    for (const iso of trainingDaysInMonth(group, viewMonthDate)) out.add(iso);
+  }
+  return out;
+}
+
+function dateLabel(dateISO) {
+  const d = new Date(`${dateISO}T12:00:00`);
+  const dow = ((d.getDay() + 6) % 7) + 1;
+  const dayName = DAYS.find((x) => x.id === dow)?.label ?? "";
+  return `${dateISO} · ${dayName}`;
+}
+
+function calendar({ group, groups, selectedISO, onSelect }) {
   const selectedDate = new Date(`${selectedISO}T12:00:00`);
   let view = new Date(selectedDate);
   view.setDate(1);
@@ -83,7 +98,7 @@ function calendar({ group, selectedISO, onSelect }) {
     const firstIsoDow = firstDow === 0 ? 7 : firstDow; // Mon=1..Sun=7, but Sun becomes 7
     const pad = firstIsoDow - 1; // how many empty before day 1
 
-    const training = trainingDaysInMonth(group, view);
+    const training = group ? trainingDaysInMonth(group, view) : allTrainingDaysInMonth(groups, view);
     const todayISO = isoDate(new Date());
 
     for (let i = 0; i < pad; i++) grid.appendChild(el("div", { class: "cal__day empty" }));
@@ -155,15 +170,34 @@ export async function renderAttendance({ store, now, setNow, navigate }) {
         el("div", { class: "stack" }, [
           el("div", { class: "title", text: "Obecność" })
         ]),
-        el("input", {
-          class: "input",
-          type: "date",
-          value: dateISO,
-          style: "max-width: 180px",
-          onchange: (e) => {
-            const value = e.target.value;
-            if (value) setNow(new Date(`${value}T12:00:00`));
-            navigate("#/attendance");
+        el("button", {
+          class: "input input--button",
+          type: "button",
+          text: dateLabel(dateISO),
+          style: "max-width: 220px",
+          onclick: () => {
+            openModal({
+              title: "Wybierz datę",
+              body: el("div", { class: "stack" }, [
+                calendar({
+                  groups,
+                  selectedISO: dateISO,
+                  onSelect: (iso) => {
+                    closeModal();
+                    setNow(new Date(`${iso}T12:00:00`));
+                    navigate("#/attendance");
+                  }
+                })
+              ]),
+              footer: [
+                btn("Zamknij", () => closeModal()),
+                btn("Dzisiaj", () => {
+                  closeModal();
+                  setNow(new Date());
+                  navigate("#/attendance");
+                }, "btn--primary")
+              ]
+            });
           }
         })
       ]),

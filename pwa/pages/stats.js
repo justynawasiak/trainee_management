@@ -1,29 +1,29 @@
 import { isoDate, isoMonth } from "../db.js";
-import { computeTraineeFee } from "../logic.js";
+import { computeTraineeFee, groupHasTrainingOnDate } from "../logic.js";
 import { bigListItem, btn, el, fmtMoney, setActions, setTitle } from "../ui.js";
 
-function monthToParts(m) {
-  const [y, mm] = String(m).split("-").map((x) => Number(x));
-  return { y, m: mm };
+function monthToParts(month) {
+  const [year, monthNum] = String(month).split("-").map((x) => Number(x));
+  return { year, month: monthNum };
 }
 
-function partsToMonth({ y, m }) {
-  return `${y}-${String(m).padStart(2, "0")}`;
+function partsToMonth({ year, month }) {
+  return `${year}-${String(month).padStart(2, "0")}`;
 }
 
 function addMonths(month, delta) {
-  const p = monthToParts(month);
-  let y = p.y;
-  let m = p.m + delta;
-  while (m <= 0) {
-    m += 12;
-    y -= 1;
+  const parts = monthToParts(month);
+  let year = parts.year;
+  let monthNum = parts.month + delta;
+  while (monthNum <= 0) {
+    monthNum += 12;
+    year -= 1;
   }
-  while (m > 12) {
-    m -= 12;
-    y += 1;
+  while (monthNum > 12) {
+    monthNum -= 12;
+    year += 1;
   }
-  return partsToMonth({ y, m });
+  return partsToMonth({ year, month: monthNum });
 }
 
 function cmpMonth(a, b) {
@@ -41,49 +41,189 @@ function monthRange(from, toInclusive) {
   return out;
 }
 
+function monthsInDateRange(startISO, endISO) {
+  return monthRange(isoMonth(new Date(`${startISO}T12:00:00`)), isoMonth(new Date(`${endISO}T12:00:00`)));
+}
+
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
 
+function dateRange(startISO, endISO) {
+  const out = [];
+  let cur = new Date(`${startISO}T12:00:00`);
+  const end = new Date(`${endISO}T12:00:00`);
+  while (cur <= end) {
+    out.push(isoDate(cur));
+    cur.setDate(cur.getDate() + 1);
+    if (out.length > 370) break;
+  }
+  return out;
+}
+
+function buildMembershipMaps(memberships) {
+  const byTrainee = new Map();
+  const byGroup = new Map();
+
+  for (const membership of memberships) {
+    const traineeRows = byTrainee.get(membership.traineeId) ?? [];
+    traineeRows.push(membership);
+    byTrainee.set(membership.traineeId, traineeRows);
+
+    const groupRows = byGroup.get(membership.groupId) ?? [];
+    groupRows.push(membership);
+    byGroup.set(membership.groupId, groupRows);
+  }
+
+  return { byTrainee, byGroup };
+}
+
+function buildAttendanceMaps(rows) {
+  const presentByKey = new Map();
+  const rowsByTrainee = new Map();
+
+  for (const row of rows) {
+    if (!row?.dateISO || !row?.groupId || !row?.traineeId) continue;
+
+    const key = `${row.dateISO}|${row.groupId}|${row.traineeId}`;
+    presentByKey.set(key, Boolean(row.present));
+
+    const traineeRows = rowsByTrainee.get(row.traineeId) ?? [];
+    traineeRows.push(row);
+    rowsByTrainee.set(row.traineeId, traineeRows);
+  }
+
+  return { presentByKey, rowsByTrainee };
+}
+
+function computeGroupAttendanceStats({ groups, membershipsByGroup, presentByKey, startISO, endISO }) {
+  const stats = new Map();
+  const dates = dateRange(startISO, endISO);
+
+  for (const group of groups) {
+    let total = 0;
+    let present = 0;
+    const memberships = membershipsByGroup.get(group.id) ?? [];
+
+    for (const dateISO of dates) {
+      const date = new Date(`${dateISO}T12:00:00`);
+      if (!groupHasTrainingOnDate(group, date)) continue;
+
+      total += memberships.length;
+      for (const membership of memberships) {
+        const key = `${dateISO}|${group.id}|${membership.traineeId}`;
+        if (presentByKey.get(key)) present += 1;
+      }
+    }
+
+    stats.set(group.id, { present, total });
+  }
+
+  return stats;
+}
+
+function computeTraineeAttendanceStats({ traineeId, memberships, groupById, presentRows, startISO, endISO }) {
+  const dates = dateRange(startISO, endISO);
+  let total = 0;
+
+  for (const membership of memberships) {
+    const group = groupById.get(membership.groupId);
+    if (!group) continue;
+
+    for (const dateISO of dates) {
+      const date = new Date(`${dateISO}T12:00:00`);
+      if (!groupHasTrainingOnDate(group, date)) continue;
+      total += 1;
+    }
+  }
+
+  const present = (presentRows ?? []).filter((row) => row.traineeId === traineeId && row.present).length;
+  return { present, total };
+}
+
 function svgBars({ labels, values, color }) {
-  const w = 360;
-  const h = 120;
+  const width = 360;
+  const height = 120;
   const pad = 10;
-  const bw = (w - pad * 2) / Math.max(1, values.length);
+  const barWidth = (width - pad * 2) / Math.max(1, values.length);
   const max = Math.max(1, ...values);
+
   const bars = values
-    .map((v, i) => {
-      const x = pad + i * bw + 2;
-      const barW = Math.max(2, bw - 4);
-      const barH = ((h - pad * 2) * v) / max;
-      const y = h - pad - barH;
-      return `<rect x="${x}" y="${y}" width="${barW}" height="${barH}" rx="6" fill="${color}"></rect>`;
+    .map((value, index) => {
+      const x = pad + index * barWidth + 2;
+      const w = Math.max(2, barWidth - 4);
+      const h = ((height - pad * 2) * value) / max;
+      const y = height - pad - h;
+      return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="6" fill="${color}"></rect>`;
     })
     .join("");
 
   const ticks = labels
-    .map((lab, i) => {
-      const x = pad + i * bw + bw / 2;
-      return `<text x="${x}" y="${h - 2}" text-anchor="middle" font-size="11" fill="rgba(255,255,255,0.72)">${lab}</text>`;
+    .map((label, index) => {
+      const x = pad + index * barWidth + barWidth / 2;
+      return `<text x="${x}" y="${height - 2}" text-anchor="middle" font-size="11" fill="rgba(255,255,255,0.72)">${label}</text>`;
     })
     .join("");
 
-  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="120" role="img" aria-label="Wykres słupkowy">
+  return `<svg viewBox="0 0 ${width} ${height}" width="100%" height="120" role="img" aria-label="Wykres slupkowy">
   ${bars}
   ${ticks}
 </svg>`;
 }
 
 function svgStackBar(present, total) {
-  const w = 360;
-  const h = 26;
+  const width = 360;
+  const height = 26;
   const pad = 2;
   const ratio = total <= 0 ? 0 : clamp(present / total, 0, 1);
-  const pw = Math.round((w - pad * 2) * ratio);
-  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="26" role="img" aria-label="Obecność">
-  <rect x="${pad}" y="${pad}" width="${w - pad * 2}" height="${h - pad * 2}" rx="12" fill="rgba(255,255,255,0.10)"></rect>
-  <rect x="${pad}" y="${pad}" width="${pw}" height="${h - pad * 2}" rx="12" fill="rgba(52,211,153,0.55)"></rect>
+  const presentWidth = Math.round((width - pad * 2) * ratio);
+
+  return `<svg viewBox="0 0 ${width} ${height}" width="100%" height="26" role="img" aria-label="Obecnosc">
+  <rect x="${pad}" y="${pad}" width="${width - pad * 2}" height="${height - pad * 2}" rx="12" fill="rgba(255,255,255,0.10)"></rect>
+  <rect x="${pad}" y="${pad}" width="${presentWidth}" height="${height - pad * 2}" rx="12" fill="rgba(52,211,153,0.55)"></rect>
 </svg>`;
+}
+
+function appendPaymentCard(bodyRoot, title, description, rows, color) {
+  const card = el("div", { class: "card" }, [
+    el("div", { class: "stack" }, [
+      el("div", { class: "title", text: title }),
+      el("div", { class: "sub", text: description })
+    ]),
+    el("div", { class: "hr" })
+  ]);
+
+  const visibleRows = rows.filter((row) => row.active > 0);
+  if (visibleRows.length === 0) {
+    card.appendChild(el("div", { class: "sub", text: "Brak danych w wybranym zakresie." }));
+    bodyRoot.appendChild(card);
+    return;
+  }
+
+  card.insertAdjacentHTML(
+    "beforeend",
+    svgBars({
+      labels: visibleRows.map((row) => row.month.slice(5)),
+      values: visibleRows.map((row) => row.pct),
+      color
+    })
+  );
+
+  const list = el("div", { class: "list", style: "margin-top:10px" });
+  visibleRows
+    .slice()
+    .reverse()
+    .forEach((row) => {
+      list.appendChild(
+        bigListItem({
+          title: row.month,
+          subtitle: `Oplacone: ${row.paid}/${row.active} (${row.pct}%) · nieoplacone: ${row.unpaid}`
+        })
+      );
+    });
+
+  card.appendChild(list);
+  bodyRoot.appendChild(card);
 }
 
 export async function renderStats({ store, pricing, now, navigate }) {
@@ -96,9 +236,9 @@ export async function renderStats({ store, pricing, now, navigate }) {
   if (trainees.length === 0) {
     main.appendChild(
       el("div", { class: "card" }, [
-        el("div", { class: "title", text: "Brak osób" }),
-        el("div", { class: "sub", text: "Dodaj osoby, żeby zobaczyć statystyki." }),
-        el("div", { style: "margin-top:10px" }, [btn("Przejdź do Osób", () => navigate("#/people"), "btn--primary")])
+        el("div", { class: "title", text: "Brak osob" }),
+        el("div", { class: "sub", text: "Dodaj osoby, aby zobaczyc statystyki." }),
+        el("div", { style: "margin-top:10px" }, [btn("Przejdz do Osob", () => navigate("#/people"), "btn--primary")])
       ])
     );
     return main;
@@ -122,7 +262,12 @@ export async function renderStats({ store, pricing, now, navigate }) {
     },
     [
       el("option", { value: "__all__", text: "Wszyscy" }),
-      ...sorted.map((t) => el("option", { value: t.id, text: `${t.firstName ?? ""} ${t.lastName ?? ""}`.trim() || "Osoba" }))
+      ...sorted.map((trainee) =>
+        el("option", {
+          value: trainee.id,
+          text: `${trainee.firstName ?? ""} ${trainee.lastName ?? ""}`.trim() || "Osoba"
+        })
+      )
     ]
   );
 
@@ -138,7 +283,7 @@ export async function renderStats({ store, pricing, now, navigate }) {
     [
       el("option", { value: "30d", text: "Ostatnie 30 dni" }),
       el("option", { value: "90d", text: "Ostatnie 90 dni" }),
-      el("option", { value: "thisMonth", text: "Bieżący miesiąc" })
+      el("option", { value: "thisMonth", text: "Biezacy miesiac" })
     ]
   );
 
@@ -147,9 +292,7 @@ export async function renderStats({ store, pricing, now, navigate }) {
   main.appendChild(
     el("div", { class: "card card--hero" }, [
       el("div", { class: "row space wrap" }, [
-        el("div", { class: "stack" }, [
-          el("div", { class: "title", text: "Statystyki" }),
-        ]),
+        el("div", { class: "stack" }, [el("div", { class: "title", text: "Statystyki" })]),
         el("div", { class: "stack", style: "gap:8px" }, [personSelect, rangeSelect])
       ])
     ])
@@ -164,241 +307,271 @@ export async function renderStats({ store, pricing, now, navigate }) {
     let rangeStart = new Date(now);
     if (range === "30d") rangeStart = new Date(rangeEnd.getTime() - 30 * 24 * 60 * 60 * 1000);
     else if (range === "90d") rangeStart = new Date(rangeEnd.getTime() - 90 * 24 * 60 * 60 * 1000);
-    else if (range === "thisMonth") {
-      rangeStart = new Date(rangeEnd.getFullYear(), rangeEnd.getMonth(), 1, 12, 0, 0);
-    }
+    else if (range === "thisMonth") rangeStart = new Date(rangeEnd.getFullYear(), rangeEnd.getMonth(), 1, 12, 0, 0);
+
     const startISO = isoDate(rangeStart);
     const endISO = isoDate(rangeEnd);
-
     const currentMonth = isoMonth(now);
     const prevMonth = addMonths(currentMonth, -1);
+
     const payments = await store.getAll("payments");
-    const payKey = (tid, m) => `${tid}|${m}`;
-    const paymentMap = new Map(payments.map((p) => [payKey(p.traineeId, p.month), p]));
+    const payKey = (traineeId, month) => `${traineeId}|${month}`;
+    const paymentMap = new Map(payments.map((payment) => [payKey(payment.traineeId, payment.month), payment]));
 
     const allMemberships = await store.getAll("memberships");
-    const membershipByTrainee = new Map();
-    const traineeIdsByGroup = new Map();
-    for (const m of allMemberships) {
-      const arr = membershipByTrainee.get(m.traineeId) ?? [];
-      arr.push(m);
-      membershipByTrainee.set(m.traineeId, arr);
-      const set = traineeIdsByGroup.get(m.groupId) ?? new Set();
-      set.add(m.traineeId);
-      traineeIdsByGroup.set(m.groupId, set);
-    }
+    const { byTrainee: membershipsByTrainee, byGroup: membershipsByGroup } = buildMembershipMaps(allMemberships);
 
     const groups = await store.getAll("groups");
-    const groupById = new Map(groups.map((g) => [g.id, g]));
+    const groupById = new Map(groups.map((group) => [group.id, group]));
 
-    const attendanceAll = (await store.getAll("attendance")).filter((r) => r.dateISO >= startISO && r.dateISO <= endISO);
+    const attendanceRows = (await store.getAll("attendance")).filter((row) => row.dateISO >= startISO && row.dateISO <= endISO);
+    const { presentByKey, rowsByTrainee } = buildAttendanceMaps(attendanceRows);
+    const groupAttendanceStats = computeGroupAttendanceStats({
+      groups,
+      membershipsByGroup,
+      presentByKey,
+      startISO,
+      endISO
+    });
 
     if (selectedId === "__all__") {
-      // Overall attendance + by group
-      const overallPresent = attendanceAll.filter((r) => r.present).length;
-      const overallTotal = attendanceAll.length;
+      const overallPresent = Array.from(groupAttendanceStats.values()).reduce((sum, item) => sum + item.present, 0);
+      const overallTotal = Array.from(groupAttendanceStats.values()).reduce((sum, item) => sum + item.total, 0);
+
       const overallCard = el("div", { class: "card" }, [
         el("div", { class: "row space wrap" }, [
-          el("div", { class: "title", text: "Obecność (wszyscy)" }),
-          el("div", { class: "pill", text: `${startISO} → ${endISO}` })
+          el("div", { class: "title", text: "Obecnosc (wszyscy)" }),
+          el("div", { class: "pill", text: `${startISO} -> ${endISO}` })
         ]),
-        el("div", { class: "sub", text: `Zapisane wpisy: ${overallPresent}/${overallTotal} (${overallTotal ? Math.round((overallPresent / overallTotal) * 100) : 0}%).` }),
+        el("div", {
+          class: "sub",
+          text: `Obecnosc: ${overallPresent}/${overallTotal} (${overallTotal ? Math.round((overallPresent / overallTotal) * 100) : 0}%).`
+        }),
         el("div", { class: "hr" })
       ]);
       overallCard.insertAdjacentHTML("beforeend", svgStackBar(overallPresent, overallTotal));
       bodyRoot.appendChild(overallCard);
 
-      const byGroup = new Map();
-      for (const r of attendanceAll) {
-        const agg = byGroup.get(r.groupId) ?? { present: 0, total: 0 };
-        agg.total += 1;
-        if (r.present) agg.present += 1;
-        byGroup.set(r.groupId, agg);
-      }
-      const groupRows = Array.from(byGroup.entries())
-        .map(([groupId, agg]) => ({
+      const groupRows = Array.from(groupAttendanceStats.entries())
+        .map(([groupId, item]) => ({
           groupId,
           name: groupById.get(groupId)?.name ?? "Grupa",
-          present: agg.present,
-          total: agg.total,
-          pct: agg.total ? Math.round((agg.present / agg.total) * 100) : 0
+          present: item.present,
+          total: item.total,
+          pct: item.total ? Math.round((item.present / item.total) * 100) : 0
         }))
+        .filter((item) => item.total > 0)
         .sort((a, b) => b.pct - a.pct || a.name.localeCompare(b.name));
 
-      const groupCard = el("div", { class: "card" }, [
+      const attendanceByGroupCard = el("div", { class: "card" }, [
         el("div", { class: "stack" }, [
-          el("div", { class: "title", text: "Obecność wg grup" }),
-          el("div", { class: "sub", text: "Wykres pokazuje % obecności (wg zapisanych wpisów w danym zakresie)." })
+          el("div", { class: "title", text: "Obecnosc wg grup" }),
+          el("div", { class: "sub", text: "Wykres pokazuje frekwencje we wszystkich zaplanowanych zajeciach." })
         ]),
         el("div", { class: "hr" })
       ]);
+
       if (groupRows.length === 0) {
-        groupCard.appendChild(el("div", { class: "sub", text: "Brak wpisów obecności w wybranym zakresie." }));
+        attendanceByGroupCard.appendChild(el("div", { class: "sub", text: "Brak zajec lub brak przypisanych osob w wybranym zakresie." }));
       } else {
-        const labs = groupRows.slice(0, 8).map((x) => (x.name.length > 10 ? `${x.name.slice(0, 10)}…` : x.name));
-        const vals = groupRows.slice(0, 8).map((x) => x.pct);
-        groupCard.insertAdjacentHTML("beforeend", svgBars({ labels: labs, values: vals, color: "rgba(96,165,250,0.55)" }));
+        const labels = groupRows.slice(0, 8).map((item) => (item.name.length > 10 ? `${item.name.slice(0, 10)}...` : item.name));
+        const values = groupRows.slice(0, 8).map((item) => item.pct);
+        attendanceByGroupCard.insertAdjacentHTML("beforeend", svgBars({ labels, values, color: "rgba(96,165,250,0.55)" }));
+
         const list = el("div", { class: "list", style: "margin-top:10px" });
-        groupRows.forEach((g) => {
+        groupRows.forEach((item) => {
           list.appendChild(
             bigListItem({
-              title: g.name,
-              subtitle: `Obecność: ${g.present}/${g.total} (${g.pct}%)`,
+              title: item.name,
+              subtitle: `Obecnosc: ${item.present}/${item.total} (${item.pct}%)`
             })
           );
         });
-        groupCard.appendChild(list);
+        attendanceByGroupCard.appendChild(list);
       }
-      bodyRoot.appendChild(groupCard);
+      bodyRoot.appendChild(attendanceByGroupCard);
 
-      // Payments overdue: summary + by group
-      const overdueCountByTrainee = new Map();
-      let overdueMonthsTotal = 0;
-      let overduePeople = 0;
-      for (const t of sorted) {
-        const ms = membershipByTrainee.get(t.id) ?? [];
-        const startAt = Math.min(t.createdAt ?? Date.now(), ...(ms.map((x) => x.createdAt ?? Date.now())));
-        const startMonth = isoMonth(new Date(startAt));
-        const overdueMonths = monthRange(startMonth, prevMonth).filter((m) => {
-          const p = paymentMap.get(payKey(t.id, m));
-          return !p || !p.paid;
-        }).length;
-        overdueCountByTrainee.set(t.id, overdueMonths);
-        overdueMonthsTotal += overdueMonths;
-        if (overdueMonths > 0) overduePeople += 1;
-      }
+      const paymentMonths = monthsInDateRange(startISO, endISO);
+      const allTraineeIds = sorted.map((trainee) => trainee.id);
+      const allByMonth = new Map();
+      for (const month of paymentMonths) allByMonth.set(month, new Set(allTraineeIds));
 
-      const overdueCard = el("div", { class: "card" }, [
-        el("div", { class: "row space wrap" }, [
-          el("div", { class: "title", text: "Zaległe płatności (wszyscy)" }),
-          el("div", { class: "pill", text: `Osób z zaległością: ${overduePeople}` })
-        ]),
-        el("div", { class: "sub", text: `Suma zaległych miesięcy: ${overdueMonthsTotal}. Liczone do poprzedniego miesiąca (${prevMonth}).` }),
-        el("div", { class: "hr" })
-      ]);
+      const presentByMonth = new Map();
+      for (const month of paymentMonths) presentByMonth.set(month, new Set());
+      attendanceRows
+        .filter((row) => row.present)
+        .forEach((row) => {
+          const month = String(row.dateISO ?? "").slice(0, 7);
+          if (presentByMonth.has(month)) presentByMonth.get(month).add(row.traineeId);
+        });
 
-      const top = sorted
-        .map((t) => ({ id: t.id, name: `${t.firstName ?? ""} ${t.lastName ?? ""}`.trim(), overdue: overdueCountByTrainee.get(t.id) ?? 0 }))
-        .sort((a, b) => b.overdue - a.overdue || a.name.localeCompare(b.name))
-        .slice(0, 8)
-        .filter((x) => x.overdue > 0);
+      const paymentRowsAll = paymentMonths.map((month) => {
+        const activeIds = allByMonth.get(month) ?? new Set();
+        let paid = 0;
+        for (const traineeId of activeIds) {
+          if (paymentMap.get(payKey(traineeId, month))?.paid) paid += 1;
+        }
+        return {
+          month,
+          active: activeIds.size,
+          paid,
+          unpaid: Math.max(0, activeIds.size - paid),
+          pct: activeIds.size ? Math.round((paid / activeIds.size) * 100) : 0
+        };
+      });
 
-      if (top.length === 0) {
-        overdueCard.appendChild(el("div", { class: "sub", text: "Brak zaległości (wg danych w aplikacji)." }));
-      } else {
-        const labs = top.map((x) => x.name.split(" ")[0] ?? x.name).map((x) => (x.length > 8 ? `${x.slice(0, 8)}…` : x));
-        const vals = top.map((x) => x.overdue);
-        overdueCard.insertAdjacentHTML("beforeend", svgBars({ labels: labs, values: vals, color: "rgba(251,113,133,0.55)" }));
-      }
-      bodyRoot.appendChild(overdueCard);
+      const paymentRowsPresent = paymentMonths.map((month) => {
+        const activeIds = presentByMonth.get(month) ?? new Set();
+        let paid = 0;
+        for (const traineeId of activeIds) {
+          if (paymentMap.get(payKey(traineeId, month))?.paid) paid += 1;
+        }
+        return {
+          month,
+          active: activeIds.size,
+          paid,
+          unpaid: Math.max(0, activeIds.size - paid),
+          pct: activeIds.size ? Math.round((paid / activeIds.size) * 100) : 0
+        };
+      });
 
-      const groupPayRows = groups
-        .map((g) => {
-          const ids = traineeIdsByGroup.get(g.id) ?? new Set();
-          let people = 0;
-          let months = 0;
-          for (const tid of ids) {
-            const c = overdueCountByTrainee.get(tid) ?? 0;
-            months += c;
-            if (c > 0) people += 1;
+      appendPaymentCard(
+        bodyRoot,
+        "Platnosci wszyscy",
+        "Wszystkie osoby z aplikacji, w miesiacach mieszczacych sie w wybranym zakresie.",
+        paymentRowsAll,
+        "rgba(251,113,133,0.55)"
+      );
+
+      appendPaymentCard(
+        bodyRoot,
+        "Platnosci obecni",
+        "Tylko osoby, ktore byly obecne przynajmniej raz w danym miesiacu z wybranego zakresu.",
+        paymentRowsPresent,
+        "rgba(52,211,153,0.55)"
+      );
+
+      const groupPaymentRows = groups
+        .map((group) => {
+          const memberships = membershipsByGroup.get(group.id) ?? [];
+          const traineeIds = new Set(memberships.map((membership) => membership.traineeId));
+          let active = 0;
+          let paid = 0;
+
+          for (const month of paymentMonths) {
+            for (const traineeId of traineeIds) {
+              active += 1;
+              if (paymentMap.get(payKey(traineeId, month))?.paid) paid += 1;
+            }
           }
-          return { groupId: g.id, name: g.name ?? "Grupa", people, months, members: ids.size };
-        })
-        .filter((x) => x.members > 0)
-        .sort((a, b) => b.people - a.people || b.months - a.months || a.name.localeCompare(b.name));
 
-      const groupPayCard = el("div", { class: "card" }, [
+          return {
+            name: group.name ?? "Grupa",
+            active,
+            paid,
+            unpaid: Math.max(0, active - paid),
+            pct: active ? Math.round((paid / active) * 100) : 0
+          };
+        })
+        .filter((item) => item.active > 0)
+        .sort((a, b) => b.pct - a.pct || a.name.localeCompare(b.name));
+
+      const paymentsByGroupCard = el("div", { class: "card" }, [
         el("div", { class: "stack" }, [
-          el("div", { class: "title", text: "Zaległości wg grup" }),
-          el("div", { class: "sub", text: "Wykres: liczba osób z zaległością w każdej grupie." })
+          el("div", { class: "title", text: "Platnosci wg grup" }),
+          el("div", { class: "sub", text: "Osoby przypisane do grup, w miesiacach mieszczacych sie w wybranym zakresie." })
         ]),
         el("div", { class: "hr" })
       ]);
-      if (groupPayRows.length === 0) {
-        groupPayCard.appendChild(el("div", { class: "sub", text: "Brak grup z przypisanymi osobami." }));
+
+      if (groupPaymentRows.length === 0) {
+        paymentsByGroupCard.appendChild(el("div", { class: "sub", text: "Brak grup z przypisanymi osobami." }));
       } else {
-        const labs = groupPayRows.slice(0, 8).map((x) => (x.name.length > 10 ? `${x.name.slice(0, 10)}…` : x.name));
-        const vals = groupPayRows.slice(0, 8).map((x) => x.people);
-        groupPayCard.insertAdjacentHTML("beforeend", svgBars({ labels: labs, values: vals, color: "rgba(251,113,133,0.55)" }));
+        paymentsByGroupCard.insertAdjacentHTML(
+          "beforeend",
+          svgBars({
+            labels: groupPaymentRows.slice(0, 8).map((item) => (item.name.length > 10 ? `${item.name.slice(0, 10)}...` : item.name)),
+            values: groupPaymentRows.slice(0, 8).map((item) => item.pct),
+            color: "rgba(251,191,36,0.55)"
+          })
+        );
+
         const list = el("div", { class: "list", style: "margin-top:10px" });
-        groupPayRows.forEach((g) => {
+        groupPaymentRows.forEach((item) => {
           list.appendChild(
             bigListItem({
-              title: g.name,
-              subtitle: `Zaległości: ${g.people}/${g.members} osób · miesięcy: ${g.months}`,
+              title: item.name,
+              subtitle: `Oplacone: ${item.paid}/${item.active} (${item.pct}%) · nieoplacone: ${item.unpaid}`
             })
           );
         });
-        groupPayCard.appendChild(list);
+        paymentsByGroupCard.appendChild(list);
       }
-      bodyRoot.appendChild(groupPayCard);
-
+      bodyRoot.appendChild(paymentsByGroupCard);
       return;
     }
 
-    // Per-person view (existing)
     const trainee = await store.get("trainees", selectedId);
     if (!trainee) return;
 
-    const attendanceRows = (await store.getAllByIndex("attendance", "byTrainee", selectedId))
-      .filter((r) => r.dateISO >= startISO && r.dateISO <= endISO)
-      .sort((a, b) => (a.dateISO ?? "").localeCompare(b.dateISO ?? ""));
-
-    const present = attendanceRows.filter((r) => r.present).length;
-    const total = attendanceRows.length;
+    const memberships = membershipsByTrainee.get(selectedId) ?? [];
+    const personalAttendance = computeTraineeAttendanceStats({
+      traineeId: selectedId,
+      memberships,
+      groupById,
+      presentRows: rowsByTrainee.get(selectedId) ?? [],
+      startISO,
+      endISO
+    });
 
     const attendanceCard = el("div", { class: "card" }, [
       el("div", { class: "row space" }, [
-        el("div", { class: "title", text: "Obecność" }),
-        el("div", { class: "pill", text: `${startISO} → ${endISO}` })
+        el("div", { class: "title", text: "Obecnosc" }),
+        el("div", { class: "pill", text: `${startISO} -> ${endISO}` })
       ]),
-      el("div", { class: "sub", text: `Zapisane wpisy: ${present}/${total} (${total ? Math.round((present / total) * 100) : 0}%).` }),
+      el("div", {
+        class: "sub",
+        text: `Obecnosc: ${personalAttendance.present}/${personalAttendance.total} (${personalAttendance.total ? Math.round((personalAttendance.present / personalAttendance.total) * 100) : 0}%).`
+      }),
       el("div", { class: "hr" })
     ]);
-    attendanceCard.insertAdjacentHTML("beforeend", svgStackBar(present, total));
+    attendanceCard.insertAdjacentHTML("beforeend", svgStackBar(personalAttendance.present, personalAttendance.total));
     bodyRoot.appendChild(attendanceCard);
 
-    const memberships = membershipByTrainee.get(selectedId) ?? [];
-    const startAt = Math.min(trainee.createdAt ?? Date.now(), ...(memberships.map((m) => m.createdAt ?? Date.now())));
-    const startMonth = isoMonth(new Date(startAt));
-
+    const startMonth = addMonths(currentMonth, -5);
     const months = monthRange(addMonths(currentMonth, -5), currentMonth);
-    const overdueMonths = monthRange(startMonth, prevMonth).filter((m) => {
-      const p = paymentMap.get(payKey(selectedId, m));
-      return !p || !p.paid;
+    const overdueMonths = monthRange(startMonth, prevMonth).filter((month) => {
+      const payment = paymentMap.get(payKey(selectedId, month));
+      return !payment || !payment.paid;
     });
 
     const paymentCard = el("div", { class: "card" }, [
       el("div", { class: "row space wrap" }, [
-        el("div", { class: "title", text: "Zaległe płatności" }),
-        el("div", { class: "pill", text: `Zaległe miesiące: ${overdueMonths.length}` })
+        el("div", { class: "title", text: "Zalegle platnosci" }),
+        el("div", { class: "pill", text: `Zalegle miesiace: ${overdueMonths.length}` })
       ]),
-      el("div", { class: "sub", text: "Wykres: ostatnie 6 miesięcy (zielone = opłacone, czerwone = zaległe/brak)." }),
+      el("div", { class: "sub", text: "Wykres pokazuje ostatnie 6 miesiecy. Zielone = oplacone, czerwone = brak platnosci." }),
       el("div", { class: "hr" })
     ]);
 
-    const labels = months.map((m) => m.slice(5));
-    const values = months.map((m) => {
-      const p = paymentMap.get(payKey(selectedId, m));
-      if (p && p.paid) return 1;
-      return 0;
-    });
-    const svg = `<svg viewBox="0 0 360 120" width="100%" height="120" role="img" aria-label="Płatności (6 miesięcy)">
+    const labels = months.map((month) => month.slice(5));
+    const values = months.map((month) => (paymentMap.get(payKey(selectedId, month))?.paid ? 1 : 0));
+    const svg = `<svg viewBox="0 0 360 120" width="100%" height="120" role="img" aria-label="Platnosci">
 ${months
-  .map((m, i) => {
-    const paid = values[i] === 1;
-    const x = 10 + i * ((360 - 20) / 6) + 2;
-    const bw = ((360 - 20) / 6) - 4;
-    const barH = paid ? 90 : 30;
-    const y = 110 - barH;
+  .map((month, index) => {
+    const paid = values[index] === 1;
+    const x = 10 + index * ((360 - 20) / 6) + 2;
+    const w = (360 - 20) / 6 - 4;
+    const h = paid ? 90 : 30;
+    const y = 110 - h;
     const fill = paid ? "rgba(52,211,153,0.55)" : "rgba(251,113,133,0.55)";
-    return `<rect x="${x}" y="${y}" width="${bw}" height="${barH}" rx="6" fill="${fill}"></rect>`;
+    return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="6" fill="${fill}"></rect>`;
   })
   .join("\n")}
 ${labels
-  .map((lab, i) => {
-    const x = 10 + i * ((360 - 20) / 6) + ((360 - 20) / 6) / 2;
-    return `<text x="${x}" y="118" text-anchor="middle" font-size="11" fill="rgba(255,255,255,0.72)">${lab}</text>`;
+  .map((label, index) => {
+    const x = 10 + index * ((360 - 20) / 6) + (360 - 20) / 12;
+    return `<text x="${x}" y="118" text-anchor="middle" font-size="11" fill="rgba(255,255,255,0.72)">${label}</text>`;
   })
   .join("\n")}
 </svg>`;
@@ -408,11 +581,11 @@ ${labels
       paymentCard.appendChild(
         el("div", {
           class: "sub",
-          text: `Zaległe: ${overdueMonths.slice(-6).join(", ")}${overdueMonths.length > 6 ? "…" : ""}`
+          text: `Zalegle: ${overdueMonths.slice(-6).join(", ")}${overdueMonths.length > 6 ? "..." : ""}`
         })
       );
     } else {
-      paymentCard.appendChild(el("div", { class: "sub", text: "Brak zaległości." }));
+      paymentCard.appendChild(el("div", { class: "sub", text: "Brak zaleglosci." }));
     }
     bodyRoot.appendChild(paymentCard);
 
@@ -421,7 +594,7 @@ ${labels
     const amount = mode === "manual" ? Number(trainee.manualMonthlyFee ?? 0) : Number(fee.autoFee ?? 0);
     bodyRoot.appendChild(
       el("div", { class: "pill" }, [
-        el("span", { text: `Kwota domyślna: ${fmtMoney(amount, pricing.currency)} (${mode === "manual" ? "ręcznie" : "auto"})` })
+        el("span", { text: `Kwota domyslna: ${fmtMoney(amount, pricing.currency)} (${mode === "manual" ? "recznie" : "auto"})` })
       ])
     );
   }

@@ -28,6 +28,10 @@ function lastKey() {
   return state.user ? `klub_sync_updatedAt__${String(state.user).toLowerCase()}` : "klub_sync_updatedAt__anon";
 }
 
+function dirtyKey() {
+  return state.user ? `klub_sync_dirty__${String(state.user).toLowerCase()}` : "klub_sync_dirty__anon";
+}
+
 function loadLastApplied() {
   try {
     lastAppliedUpdatedAt = Number(localStorage.getItem(lastKey()) ?? "0") || 0;
@@ -45,12 +49,29 @@ function saveLastApplied(v) {
   }
 }
 
+function loadDirtyFlag() {
+  try {
+    syncDirty = localStorage.getItem(dirtyKey()) === "1";
+  } catch {
+    syncDirty = false;
+  }
+}
+
+function saveDirtyFlag(v) {
+  syncDirty = Boolean(v);
+  try {
+    localStorage.setItem(dirtyKey(), syncDirty ? "1" : "0");
+  } catch {
+    // ignore
+  }
+}
+
 async function pushSyncNow() {
   if (!state.user) return;
   if (!state.store) return;
   if (state.syncSuspended) return;
   if (syncInFlight) {
-    syncDirty = true;
+    saveDirtyFlag(true);
     return;
   }
   const now = Date.now();
@@ -63,12 +84,14 @@ async function pushSyncNow() {
     const payload = await exportAll(state.store);
     let res = await fetch("/api/sync/push", {
       method: "POST",
+      keepalive: true,
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload)
     });
     if (res.status === 404) {
       res = await fetch("/api/sync_push.php", {
         method: "POST",
+        keepalive: true,
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload)
       });
@@ -76,7 +99,10 @@ async function pushSyncNow() {
     if (res.ok) {
       try {
         const json = await res.json();
-        if (json?.updatedAt) saveLastApplied(Number(json.updatedAt) || 0);
+        if (json?.updatedAt) {
+          saveLastApplied(Number(json.updatedAt) || 0);
+          saveDirtyFlag(false);
+        }
       } catch {
         // ignore
       }
@@ -95,6 +121,7 @@ async function pushSyncNow() {
 function scheduleAutoSync() {
   if (!state.user) return;
   if (state.syncSuspended) return;
+  saveDirtyFlag(true);
   if (syncTimer) clearTimeout(syncTimer);
   // debounce: push after a short idle
   syncTimer = setTimeout(() => {
@@ -124,6 +151,7 @@ async function pullSyncIfNewer() {
     state.syncSuspended = false;
     state.pricing = await state.store.get("settings", "pricing");
     saveLastApplied(updatedAt);
+    saveDirtyFlag(false);
     await render();
   } catch {
     // ignore
@@ -235,6 +263,7 @@ async function init() {
   state.store = await createStore({ namespace: state.user, onWrite: scheduleAutoSync });
   state.pricing = await state.store.get("settings", "pricing");
   loadLastApplied();
+  loadDirtyFlag();
 
   // Auto-pull from server on a fresh device (no trainees yet).
   try {
@@ -250,6 +279,7 @@ async function init() {
           state.syncSuspended = false;
           state.pricing = await state.store.get("settings", "pricing");
           saveLastApplied(Number(json.updatedAt ?? 0) || 0);
+          saveDirtyFlag(false);
         }
       }
     }
@@ -257,9 +287,16 @@ async function init() {
     // ignore
   }
 
+  if (syncDirty) {
+    await pushSyncNow();
+  }
+
   window.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") pushSyncNow();
     if (document.visibilityState === "visible") pullSyncIfNewer();
+  });
+  window.addEventListener("pagehide", () => {
+    pushSyncNow();
   });
   startAutoPull();
 
