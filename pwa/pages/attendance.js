@@ -1,4 +1,4 @@
-import { isoDate } from "../db.js";
+﻿import { isoDate } from "../db.js";
 import { getSessionScopes, groupHasTrainingOnDate, setAttendance, setSessionScopes } from "../logic.js";
 import { DAYS, bigListItem, btn, closeModal, el, fmtSchedule, iconToggle, openModal, setActions, setTitle, showToast } from "../ui.js";
 
@@ -365,6 +365,7 @@ export async function renderAttendanceGroup({ store, now, navigate, params }) {
           el("div", { class: "title", text: group.name ?? "Grupa" })
         ]),
         el("div", { class: "row", style: "gap:8px" }, [
+          btn("←", () => navigate("#/attendance"), "btn--back"),
           btn("Zakres", () => {
             const selected = new Set(selectedScopeIds);
             let searchScopes = "";
@@ -434,8 +435,7 @@ export async function renderAttendanceGroup({ store, now, navigate, params }) {
                 )
               ]
             });
-          }),
-          btn("←", () => navigate("#/attendance"))
+          })
         ])
       ]),
       el("div", { class: "hr" }),
@@ -534,3 +534,5 @@ export async function renderAttendanceGroup({ store, now, navigate, params }) {
   main.appendChild(list);
   return main;
 }
+
+

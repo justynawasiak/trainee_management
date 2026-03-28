@@ -1,4 +1,4 @@
-import { exportAll, replaceAll } from "../logic.js";
+﻿import { exportAll, replaceAll } from "../logic.js";
 import { btn, closeModal, el, openModal, setActions, setTitle, showModalError, showToast } from "../ui.js";
 
 async function doLogout() {
@@ -313,3 +313,4 @@ export async function renderSettings({ store, pricing, setPricing, navigate, use
 
   return main;
 }
+

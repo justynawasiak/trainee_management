@@ -1,4 +1,4 @@
-import { DAYS, bigListItem, btn, closeModal, el, fmtSchedule, openModal, setActions, setTitle, showToast } from "../ui.js";
+﻿import { DAYS, bigListItem, btn, closeModal, el, fmtSchedule, openModal, setActions, setTitle, showToast } from "../ui.js";
 
 export async function renderGroups({ store, navigate }) {
   setTitle("Grupy");
@@ -99,7 +99,7 @@ export async function renderGroupDetail({ store, navigate, params }) {
           el("div", { class: "sub", text: fmtSchedule(group.schedule) })
         ]),
         el("div", { class: "row", style: "gap:8px" }, [
-          btn("←", () => navigate("#/groups")),
+          btn("←", () => navigate("#/groups"), "btn--back"),
           btn("Edytuj", () => openGroupEditor({ store, navigate }, group.id), "btn--primary")
         ])
       ])
@@ -435,3 +435,5 @@ async function openEditMemberSessions(ctx, membershipId) {
   ];
   openModal({ title: "Treningi/tydzień", body, footer });
 }
+
+

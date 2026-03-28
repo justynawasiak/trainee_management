@@ -1,6 +1,6 @@
 import { isoDate, isoMonth } from "../db.js";
 import { computeTraineeFee, groupHasTrainingOnDate } from "../logic.js";
-import { bigListItem, btn, el, fmtMoney, setActions, setTitle } from "../ui.js";
+import { bigListItem, btn, closeModal, el, fmtMoney, openModal, setActions, setTitle } from "../ui.js";
 
 function monthToParts(month) {
   const [year, monthNum] = String(month).split("-").map((x) => Number(x));
@@ -59,6 +59,15 @@ function dateRange(startISO, endISO) {
     if (out.length > 370) break;
   }
   return out;
+}
+
+function countGroupTrainingDays(group, startISO, endISO) {
+  let count = 0;
+  for (const dateISO of dateRange(startISO, endISO)) {
+    const date = new Date(`${dateISO}T12:00:00`);
+    if (groupHasTrainingOnDate(group, date)) count += 1;
+  }
+  return count;
 }
 
 function buildMembershipMaps(memberships) {
@@ -143,29 +152,47 @@ function computeTraineeAttendanceStats({ traineeId, memberships, groupById, pres
 
 function svgBars({ labels, values, color, maxValue }) {
   const width = 360;
-  const height = 120;
-  const pad = 10;
-  const barWidth = (width - pad * 2) / Math.max(1, values.length);
+  const height = 168;
+  const padX = 14;
+  const padTop = 18;
+  const padBottom = 34;
+  const chartHeight = height - padTop - padBottom;
+  const slotWidth = (width - padX * 2) / Math.max(1, values.length);
+  const barGap = Math.max(8, Math.min(16, slotWidth * 0.22));
+  const barWidth = Math.max(14, slotWidth - barGap);
   const max = Math.max(1, Number(maxValue ?? 0) || 0, ...values);
+
+  const guides = [0.25, 0.5, 0.75, 1]
+    .map((ratio) => {
+      const y = padTop + chartHeight - chartHeight * ratio;
+      return `<line x1="${padX}" y1="${y}" x2="${width - padX}" y2="${y}" stroke="rgba(255,255,255,0.10)" stroke-width="1" />`;
+    })
+    .join("");
 
   const bars = values
     .map((value, index) => {
-      const x = pad + index * barWidth + 2;
-      const w = Math.max(2, barWidth - 4);
-      const h = ((height - pad * 2) * value) / max;
-      const y = height - pad - h;
-      return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="6" fill="${color}"></rect>`;
+      const x = padX + index * slotWidth + (slotWidth - barWidth) / 2;
+      const h = (chartHeight * value) / max;
+      const y = padTop + chartHeight - h;
+      const safeValue = Number.isFinite(value) ? value : 0;
+      const labelY = Math.max(12, y - 6);
+      return `
+        <text x="${x + barWidth / 2}" y="${labelY}" text-anchor="middle" font-size="10" font-weight="700" fill="rgba(255,255,255,0.86)">${safeValue}</text>
+        <rect x="${x}" y="${y}" width="${barWidth}" height="${h}" rx="8" fill="${color}"></rect>
+      `;
     })
     .join("");
 
   const ticks = labels
     .map((label, index) => {
-      const x = pad + index * barWidth + barWidth / 2;
-      return `<text x="${x}" y="${height - 2}" text-anchor="middle" font-size="11" fill="rgba(255,255,255,0.72)">${label}</text>`;
+      const x = padX + index * slotWidth + slotWidth / 2;
+      return `<text x="${x}" y="${height - 10}" text-anchor="middle" font-size="11" fill="rgba(255,255,255,0.78)">${label}</text>`;
     })
     .join("");
 
-  return `<svg viewBox="0 0 ${width} ${height}" width="100%" height="120" role="img" aria-label="Wykres slupkowy">
+  return `<svg viewBox="0 0 ${width} ${height}" width="100%" height="168" role="img" aria-label="Wykres slupkowy">
+  <rect x="${padX}" y="${padTop}" width="${width - padX * 2}" height="${chartHeight}" rx="14" fill="rgba(255,255,255,0.03)"></rect>
+  ${guides}
   ${bars}
   ${ticks}
 </svg>`;
@@ -324,6 +351,7 @@ export async function renderStats({ store, pricing, now, navigate }) {
 
     const groups = await store.getAll("groups");
     const groupById = new Map(groups.map((group) => [group.id, group]));
+    const traineeById = new Map(trainees.map((trainee) => [trainee.id, trainee]));
 
     const attendanceRows = (await store.getAll("attendance")).filter((row) => row.dateISO >= startISO && row.dateISO <= endISO);
     const { presentByKey, rowsByTrainee } = buildAttendanceMaps(attendanceRows);
@@ -334,6 +362,48 @@ export async function renderStats({ store, pricing, now, navigate }) {
       startISO,
       endISO
     });
+
+    function openGroupStats(groupId) {
+      const group = groupById.get(groupId);
+      if (!group) return;
+
+      const memberships = membershipsByGroup.get(groupId) ?? [];
+      const memberIds = memberships.map((membership) => membership.traineeId);
+      const memberCount = memberIds.length;
+      const attendance = groupAttendanceStats.get(groupId) ?? { present: 0, total: 0 };
+      const trainingCount = countGroupTrainingDays(group, startISO, endISO);
+      const uniquePresentIds = new Set(
+        attendanceRows.filter((row) => row.groupId === groupId && row.present).map((row) => row.traineeId)
+      );
+      const activeMembers = uniquePresentIds.size;
+      const avgPresentPerTraining = trainingCount ? Math.round((attendance.present / trainingCount) * 10) / 10 : 0;
+      const monthsInRange = monthsInDateRange(startISO, endISO);
+      let paidCount = 0;
+      let payableSlots = 0;
+      for (const month of monthsInRange) {
+        for (const traineeId of memberIds) {
+          payableSlots += 1;
+          if (paymentMap.get(payKey(traineeId, month))?.paid) paidCount += 1;
+        }
+      }
+      const paymentPct = payableSlots ? Math.round((paidCount / payableSlots) * 100) : 0;
+      openModal({
+        title: group.name ?? "Statystyki grupy",
+        body: el("div", { class: "stack" }, [
+          el("div", { class: "card" }, [
+            el("div", { class: "title", text: "Podsumowanie" }),
+            el("div", { class: "sub", text: `Zakres: ${startISO} -> ${endISO}` }),
+            el("div", { class: "hr" }),
+            bigListItem({ title: "Obecność", subtitle: `${attendance.present}/${attendance.total} (${attendance.total ? Math.round((attendance.present / attendance.total) * 100) : 0}%)` }),
+            bigListItem({ title: "Obecni / zapisani", subtitle: `${activeMembers}/${memberCount} osób było choć raz na zajęciach` }),
+            bigListItem({ title: "Liczba treningów", subtitle: `${trainingCount} w wybranym zakresie` }),
+            bigListItem({ title: "Średnio na treningu", subtitle: `${avgPresentPerTraining} osoby` }),
+            bigListItem({ title: "Płatności grupy", subtitle: payableSlots ? `${paidCount}/${payableSlots} (${paymentPct}%)` : "Brak danych płatności" })
+          ])
+        ]),
+        footer: [btn("Zamknij", () => closeModal(), "btn--primary")]
+      });
+    }
 
     if (selectedId === "__all__") {
       const overallPresent = Array.from(groupAttendanceStats.values()).reduce((sum, item) => sum + item.present, 0);
@@ -384,7 +454,8 @@ export async function renderStats({ store, pricing, now, navigate }) {
           list.appendChild(
             bigListItem({
               title: item.name,
-              subtitle: `Obecnosc: ${item.present}/${item.total} (${item.pct}%)`
+              subtitle: `Obecnosc: ${item.present}/${item.total} (${item.pct}%)`,
+              onClick: () => openGroupStats(item.groupId)
             })
           );
         });

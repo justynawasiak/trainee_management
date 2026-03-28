@@ -1,4 +1,4 @@
-export const DAYS = [
+﻿export const DAYS = [
   { id: 1, label: "Poniedziałek" },
   { id: 2, label: "Wtorek" },
   { id: 3, label: "Środa" },
