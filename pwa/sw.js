@@ -1,6 +1,14 @@
 // NOTE: In hosted (server + login) mode we avoid caching the app shell HTML to not bypass auth when offline.
 const CACHE_NAME = "klub-cache-v2";
-const ASSETS = ["./styles.css", "./assets/icon.svg"];
+const ASSETS = [
+  "./styles.css",
+  "./assets/icon.svg",
+  "./assets/icon-192.png",
+  "./assets/icon-512.png",
+  "./assets/screenshot-mobile.png",
+  "./assets/screenshot-wide.png",
+  "./manifest.webmanifest"
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -30,7 +38,7 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     fetch(req)
       .then((res) => {
-        if (res.ok && (url.pathname.endsWith(".css") || url.pathname.endsWith(".svg"))) {
+        if (res.ok && (url.pathname.endsWith(".css") || url.pathname.endsWith(".svg") || url.pathname.endsWith(".png") || url.pathname.endsWith(".webmanifest"))) {
           const copy = res.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(req, copy)).catch(() => {});
         }
