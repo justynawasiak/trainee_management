@@ -1,8 +1,12 @@
+import { STORE_NAMES } from "./validation.js";
+
 const DB_NAME_BASE = "klub_db";
 const DB_VERSION = 2;
+const createdDatabases = new WeakSet();
 
 function uuid() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  if (globalThis.crypto?.getRandomValues) return [...crypto.getRandomValues(new Uint8Array(16))].map(value => value.toString(16).padStart(2, "0")).join("");
   return `id_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
@@ -15,8 +19,9 @@ function withRequest(request) {
 
 function openDb(dbName) {
   const request = indexedDB.open(dbName, DB_VERSION);
-  request.onupgradeneeded = () => {
+  request.onupgradeneeded = (event) => {
     const db = request.result;
+    if (event.oldVersion === 0) createdDatabases.add(db);
     const t = request.transaction;
 
     function getOrCreateStore(name, opts) {
@@ -92,7 +97,13 @@ function tx(db, storeNames, mode, run) {
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error ?? new Error("Transaction error"));
     transaction.onabort = () => reject(transaction.error ?? new Error("Transaction abort"));
-    run(transaction);
+    try {
+      const result = run(transaction);
+      if (result?.then) throw new Error("Transaction runner must be synchronous");
+    } catch (error) {
+      transaction.abort();
+      reject(error);
+    }
   });
 }
 
@@ -105,13 +116,29 @@ function sanitizeNamespace(input) {
 }
 
 export async function createStore(opts = {}) {
-  const ns = sanitizeNamespace(opts.namespace);
+  if (opts.accountId !== undefined && !/^[a-f0-9]{64}$/.test(opts.accountId)) throw new Error("Nieprawidłowe konto");
+  const ns = opts.accountId ? `account_${opts.accountId}` : sanitizeNamespace(opts.namespace);
   const dbName = ns ? `${DB_NAME_BASE}__${ns}` : DB_NAME_BASE;
   const db = await openDb(dbName);
+  const migratedLegacy = opts.accountId && opts.legacyNamespace ? await migrateLegacyDatabase(db, opts.legacyNamespace) : false;
   await ensureDefaults(db);
   const onWrite = typeof opts.onWrite === "function" ? opts.onWrite : null;
+  const beforeWrite = typeof opts.onBeforeWrite === "function" ? opts.onBeforeWrite : null;
   return {
     dbName,
+    migratedLegacy,
+    freshDatabase: createdDatabases.has(db) && !migratedLegacy,
+    async removeLocalData() {
+      db.close();
+      const names = [dbName];
+      if (opts.legacyNamespace) names.push(`${DB_NAME_BASE}__${sanitizeNamespace(opts.legacyNamespace)}`);
+      for (const name of names) await new Promise((resolve, reject) => {
+        const request = indexedDB.deleteDatabase(name);
+        request.onsuccess = resolve;
+        request.onerror = () => reject(request.error);
+        request.onblocked = () => reject(new Error("Zamknij inne karty aplikacji, aby usunąć dane lokalne."));
+      });
+    },
     async getAll(storeName) {
       const transaction = db.transaction([storeName], "readonly");
       const store = transaction.objectStore(storeName);
@@ -123,21 +150,18 @@ export async function createStore(opts = {}) {
       return withRequest(store.get(key));
     },
     async put(storeName, value) {
-      const transaction = db.transaction([storeName], "readwrite");
-      const store = transaction.objectStore(storeName);
-      await withRequest(store.put(value));
+      beforeWrite?.();
+      await tx(db, [storeName], "readwrite", transaction => transaction.objectStore(storeName).put(value));
       onWrite?.();
     },
     async delete(storeName, key) {
-      const transaction = db.transaction([storeName], "readwrite");
-      const store = transaction.objectStore(storeName);
-      await withRequest(store.delete(key));
+      beforeWrite?.();
+      await tx(db, [storeName], "readwrite", transaction => transaction.objectStore(storeName).delete(key));
       onWrite?.();
     },
     async clear(storeName) {
-      const transaction = db.transaction([storeName], "readwrite");
-      const store = transaction.objectStore(storeName);
-      await withRequest(store.clear());
+      beforeWrite?.();
+      await tx(db, [storeName], "readwrite", transaction => transaction.objectStore(storeName).clear());
       onWrite?.();
     },
     async getAllByIndex(storeName, indexName, query) {
@@ -152,53 +176,69 @@ export async function createStore(opts = {}) {
       const index = store.index(indexName);
       return withRequest(index.get(query));
     },
-    async runTx(storeNames, mode, runner) {
+    async getSnapshot(storeNames) {
+      const transaction = db.transaction(storeNames, "readonly");
+      const entries = await Promise.all(storeNames.map(async name => [name, await withRequest(transaction.objectStore(name).getAll())]));
+      return Object.fromEntries(entries);
+    },
+    async runTx(storeNames, mode, runner, { notify = true } = {}) {
+      if (mode === "readwrite" && notify) beforeWrite?.();
       await tx(db, storeNames, mode, runner);
-      if (String(mode) === "readwrite") onWrite?.();
+      if (mode === "readwrite" && notify) onWrite?.();
     },
     uuid
   };
 }
 
-async function ensureDefaults(db) {
-  const transaction = db.transaction(["settings", "attendance", "payments", "scopes"], "readwrite");
-  const settings = transaction.objectStore("settings");
-  const scopes = transaction.objectStore("scopes");
-
-  const existingPricing = await withRequest(settings.get("pricing")).catch(() => undefined);
-  if (!existingPricing) {
-    const pricing = {
-      key: "pricing",
-      currency: "PLN",
-      feeBySessionsPerWeek: {
-        "1": 120,
-        "2": 200,
-        "3": 260,
-        "4": 320,
-        "all": 320
-      }
-    };
-    await withRequest(settings.put(pricing));
-  }
-
-  // Default scope catalog
-  const scopesCount = await withRequest(scopes.count()).catch(() => 0);
-  if (!scopesCount) {
-    const defaults = [
-      { name: "Rozgrzewka" },
-      { name: "Technika" },
-      { name: "Taktyka" },
-      { name: "Sparing" },
-      { name: "Motoryka" }
-    ];
-    for (const s of defaults) {
-      await withRequest(scopes.put({ id: uuid(), name: s.name, createdAt: Date.now() }));
+async function migrateLegacyDatabase(db, namespace) {
+  const marker = await withRequest(db.transaction(["settings"], "readonly").objectStore("settings").get("accountMigration"));
+  const pricing = await withRequest(db.transaction(["settings"], "readonly").objectStore("settings").get("pricing"));
+  // Imports replace settings, so the presence of initialized data also prevents remigration.
+  if (marker || pricing) return false;
+  const legacyName = `${DB_NAME_BASE}__${sanitizeNamespace(namespace)}`;
+  const databases = indexedDB.databases ? await indexedDB.databases() : null;
+  let copied = false;
+  if (!databases || databases.some(entry => entry.name === legacyName)) {
+    const legacy = await openDb(legacyName);
+    try {
+      const transaction = legacy.transaction(STORE_NAMES, "readonly");
+      const rows = await Promise.all(STORE_NAMES.map(name => withRequest(transaction.objectStore(name).getAll())));
+      copied = rows.some(entries => entries.length > 0);
+      await tx(db, STORE_NAMES, "readwrite", transaction => {
+        rows.forEach((entries, index) => entries.forEach(row => transaction.objectStore(STORE_NAMES[index]).put(row)));
+      });
+    } finally {
+      legacy.close();
     }
   }
+  await tx(db, ["settings"], "readwrite", transaction => {
+    transaction.objectStore("settings").put({ key: "accountMigration", doneAt: Date.now() });
+  });
+  return copied;
+}
 
-  await new Promise((resolve, reject) => {
-    transaction.oncomplete = resolve;
-    transaction.onerror = () => reject(transaction.error ?? new Error("Settings tx error"));
+async function ensureDefaults(db) {
+  await tx(db, ["settings", "scopes"], "readwrite", transaction => {
+    const settings = transaction.objectStore("settings");
+    const request = settings.get("pricing");
+    request.onsuccess = () => {
+      if (request.result) return;
+      settings.put({
+        key: "pricing",
+        currency: "PLN",
+        feeBySessionsPerWeek: {
+          "1": 120,
+          "2": 200,
+          "3": 260,
+          "4": 320,
+          "all": 320
+        }
+      });
+      const scopes = transaction.objectStore("scopes");
+      for (const name of ["Rozgrzewka", "Technika", "Taktyka", "Sparing", "Motoryka"]) {
+        scopes.put({ id: uuid(), name, createdAt: Date.now() });
+      }
+    };
   });
 }
 

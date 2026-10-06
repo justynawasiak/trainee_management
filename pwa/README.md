@@ -1,44 +1,27 @@
-# Klub — prosta aplikacja mobilna (PWA)
+# Klub — application behavior
 
-To jest prosta aplikacja typu **PWA** (działa w przeglądarce na telefonie i można ją „zainstalować” na ekranie głównym).
+- People can be assigned to several groups when created or edited. The person and assignments are saved together.
+- Each group shows the number of currently assigned people.
+- Attendance can be recorded for a selected date. A group can be cancelled or restored for that date. Cancellation preserves attendance records but excludes the session from statistics.
+- Monthly payment lists are read-only until a payment or amount is changed. Zero weekly sessions produce a zero automatic fee. Manual fees remain supported.
+- Numeric values, schedule times, and backups are validated before saving.
 
-## Najważniejsze funkcje
+## History
 
-- Osoby: imię, nazwisko, telefon, e-mail
-- Grupy + harmonogram
-- Przypisywanie osób do grup + treningi/tydzień (suma po grupach)
-- Obecność: **1 klik** na osobę w wybranej grupie i dacie
-- Płatności: **1 klik** na osobę w danym miesiącu
+Removing someone from a group closes their membership period instead of deleting its history. Rejoining opens another period. Group schedule changes preserve previous schedules, effective by date. Attendance statistics use these periods and schedules. Legacy history that was deleted before this update cannot be reconstructed automatically. Previously stored memberships use their creation date as the available starting point.
 
-## Uruchomienie lokalnie
+Monthly billing starts with a person's creation month; earlier explicit payment records remain stored. Cancelled sessions do not change the recurring fee. If a club charges a separate minimum membership fee, configure it manually rather than relying on a person having zero sessions.
 
-W katalogu repo uruchom:
+## Synchronization and backup
 
-```powershell
-.\serve.ps1 -Port 5173
-```
+Local changes are marked unsynchronized before writes and cleared only after the server acknowledges that snapshot. Failed requests retry. The server requires a matching revision; competing device edits create a visible conflict instead of overwriting each other.
 
-Albo w WSL (bash):
+Resolve a conflict in Settings: export the local backup, then choose which version to keep. The download action saves a backup before replacing unsynchronized local data. To retain local changes after downloading the server version, reapply them or import a deliberately reconciled complete backup. Imports also export the previous local state and reject incomplete or invalid files before any replacement.
 
-```bash
-chmod +x ./serve.sh
-./serve.sh --port 5173
-```
+All synchronization controls use the same coordinator. Synchronization runs quietly in the background; a status message displays errors or conflicts. Credentials and private server files are never served as static assets.
 
-Potem otwórz w przeglądarce: `http://localhost:5173/`
+Settings offers logout, which retains the browser's local database. Unsynchronized changes must be synchronized or backed up and resolved first. Clearing server authentication is checked before leaving the page.
 
-Na telefonie (w tej samej sieci Wi‑Fi) wejdź na `http://<IP_twojego_komputera>:5173/`.
+## Running
 
-Jeśli chcesz wejść z telefonu bez hostingu zewnętrznego, spróbuj:
-
-```powershell
-.\serve.ps1 -Port 5173 -ListenAll
-```
-
-(Tryb `-ListenAll` może wymagać dodatkowych uprawnień/urlacl w Windows.)
-
-W WSL odpowiednik:
-
-```bash
-./serve.sh --port 5173 --listen-all
-```
+Use `../serve.sh` or `../serve-php.sh` from WSL/Bash. Both require PHP and start authenticated routes. See the root README for provisioning, tests, and migration. There is no PowerShell launcher or static-server mode.

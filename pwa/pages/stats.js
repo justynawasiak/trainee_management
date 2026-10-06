@@ -1,6 +1,6 @@
 import { isoDate, isoMonth } from "../db.js";
-import { computeTraineeFee, groupHasTrainingOnDate } from "../logic.js";
-import { bigListItem, btn, closeModal, el, fmtMoney, openModal, setActions, setTitle } from "../ui.js";
+import { computeTraineeFee, groupHasTrainingOnDate, isGroupSessionCancelled, membershipIncludesDate, membershipOverlapsRange } from "../logic.js";
+import { bigListItem, btn, closeModal, el, fmtMoney, openModal, setActions, setTitle, showToast } from "../ui.js";
 
 function monthToParts(month) {
   const [year, monthNum] = String(month).split("-").map((x) => Number(x));
@@ -43,6 +43,11 @@ function monthRange(from, toInclusive) {
 
 function monthsInDateRange(startISO, endISO) {
   return monthRange(isoMonth(new Date(`${startISO}T12:00:00`)), isoMonth(new Date(`${endISO}T12:00:00`)));
+}
+
+function monthDates(month) {
+  const { year, month: monthNumber } = monthToParts(month);
+  return { start: `${month}-01`, end: isoDate(new Date(year, monthNumber, 0, 12)) };
 }
 
 function clamp(n, min, max) {
@@ -118,8 +123,9 @@ function computeGroupAttendanceStats({ groups, membershipsByGroup, presentByKey,
       const date = new Date(`${dateISO}T12:00:00`);
       if (!groupHasTrainingOnDate(group, date)) continue;
 
-      total += memberships.length;
-      for (const membership of memberships) {
+      const sessionMembers = memberships.filter(membership => membershipIncludesDate(membership, dateISO));
+      total += sessionMembers.length;
+      for (const membership of sessionMembers) {
         const key = `${dateISO}|${group.id}|${membership.traineeId}`;
         if (presentByKey.get(key)) present += 1;
       }
@@ -141,13 +147,19 @@ function computeTraineeAttendanceStats({ traineeId, memberships, groupById, pres
 
     for (const dateISO of dates) {
       const date = new Date(`${dateISO}T12:00:00`);
-      if (!groupHasTrainingOnDate(group, date)) continue;
+      if (!groupHasTrainingOnDate(group, date) || !membershipIncludesDate(membership, dateISO)) continue;
       total += 1;
     }
   }
 
-  const present = (presentRows ?? []).filter((row) => row.traineeId === traineeId && row.present).length;
+  const present = (presentRows ?? []).filter(row => row.traineeId === traineeId && row.present &&
+    groupHasTrainingOnDate(groupById.get(row.groupId), new Date(`${row.dateISO}T12:00:00`)) &&
+    memberships.some(membership => membership.groupId === row.groupId && membershipIncludesDate(membership, row.dateISO))).length;
   return { present, total };
+}
+
+function escapeXml(value) {
+  return String(value).replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[character]));
 }
 
 function svgBars({ labels, values, color, maxValue }) {
@@ -186,7 +198,7 @@ function svgBars({ labels, values, color, maxValue }) {
   const ticks = labels
     .map((label, index) => {
       const x = padX + index * slotWidth + slotWidth / 2;
-      return `<text x="${x}" y="${height - 10}" text-anchor="middle" font-size="11" fill="rgba(255,255,255,0.78)">${label}</text>`;
+      return `<text x="${x}" y="${height - 10}" text-anchor="middle" font-size="11" fill="rgba(255,255,255,0.78)">${escapeXml(label)}</text>`;
     })
     .join("");
 
@@ -285,7 +297,7 @@ export async function renderStats({ store, pricing, now, navigate }) {
       class: "input",
       onchange: (e) => {
         selectedId = e.target.value;
-        renderBody();
+        renderBody().catch(error => showToast(error.message || "Nie udało się odświeżyć statystyk."));
       }
     },
     [
@@ -305,7 +317,7 @@ export async function renderStats({ store, pricing, now, navigate }) {
       class: "input",
       onchange: (e) => {
         range = e.target.value;
-        renderBody();
+        renderBody().catch(error => showToast(error.message || "Nie udało się odświeżyć statystyk."));
       }
     },
     [
@@ -328,14 +340,19 @@ export async function renderStats({ store, pricing, now, navigate }) {
 
   main.appendChild(bodyRoot);
 
+  const outputRoot = bodyRoot;
+  let bodyGeneration = 0;
   async function renderBody() {
-    bodyRoot.innerHTML = "";
+    const generation = ++bodyGeneration;
+    const selectedPerson = selectedId;
+    const selectedRange = range;
+    const bodyRoot = el("div", { class: "stack" });
 
     const rangeEnd = new Date(now);
     let rangeStart = new Date(now);
-    if (range === "30d") rangeStart = new Date(rangeEnd.getTime() - 30 * 24 * 60 * 60 * 1000);
-    else if (range === "90d") rangeStart = new Date(rangeEnd.getTime() - 90 * 24 * 60 * 60 * 1000);
-    else if (range === "thisMonth") rangeStart = new Date(rangeEnd.getFullYear(), rangeEnd.getMonth(), 1, 12, 0, 0);
+    if (selectedRange === "30d") rangeStart = new Date(rangeEnd.getTime() - 30 * 24 * 60 * 60 * 1000);
+    else if (selectedRange === "90d") rangeStart = new Date(rangeEnd.getTime() - 90 * 24 * 60 * 60 * 1000);
+    else if (selectedRange === "thisMonth") rangeStart = new Date(rangeEnd.getFullYear(), rangeEnd.getMonth(), 1, 12, 0, 0);
 
     const startISO = isoDate(rangeStart);
     const endISO = isoDate(rangeEnd);
@@ -345,6 +362,10 @@ export async function renderStats({ store, pricing, now, navigate }) {
     const payments = await store.getAll("payments");
     const payKey = (traineeId, month) => `${traineeId}|${month}`;
     const paymentMap = new Map(payments.map((payment) => [payKey(payment.traineeId, payment.month), payment]));
+    const payableInMonth = (traineeId, month) => {
+      const trainee = traineeById.get(traineeId);
+      return trainee && (paymentMap.has(payKey(traineeId, month)) || !trainee.createdAt || isoMonth(new Date(trainee.createdAt)) <= month);
+    };
 
     const allMemberships = await store.getAll("memberships");
     const { byTrainee: membershipsByTrainee, byGroup: membershipsByGroup } = buildMembershipMaps(allMemberships);
@@ -353,7 +374,9 @@ export async function renderStats({ store, pricing, now, navigate }) {
     const groupById = new Map(groups.map((group) => [group.id, group]));
     const traineeById = new Map(trainees.map((trainee) => [trainee.id, trainee]));
 
-    const attendanceRows = (await store.getAll("attendance")).filter((row) => row.dateISO >= startISO && row.dateISO <= endISO);
+    const attendanceRows = (await store.getAll("attendance")).filter((row) =>
+      row.dateISO >= startISO && row.dateISO <= endISO && !isGroupSessionCancelled(groupById.get(row.groupId), row.dateISO)
+    );
     const { presentByKey, rowsByTrainee } = buildAttendanceMaps(attendanceRows);
     const groupAttendanceStats = computeGroupAttendanceStats({
       groups,
@@ -367,7 +390,7 @@ export async function renderStats({ store, pricing, now, navigate }) {
       const group = groupById.get(groupId);
       if (!group) return;
 
-      const memberships = membershipsByGroup.get(groupId) ?? [];
+      const memberships = (membershipsByGroup.get(groupId) ?? []).filter(membership => membershipOverlapsRange(membership, startISO, endISO));
       const memberIds = memberships.map((membership) => membership.traineeId);
       const memberCount = memberIds.length;
       const attendance = groupAttendanceStats.get(groupId) ?? { present: 0, total: 0 };
@@ -382,6 +405,8 @@ export async function renderStats({ store, pricing, now, navigate }) {
       let payableSlots = 0;
       for (const month of monthsInRange) {
         for (const traineeId of memberIds) {
+          const dates = monthDates(month);
+          if (!payableInMonth(traineeId, month) || !memberships.some(membership => membership.traineeId === traineeId && membershipOverlapsRange(membership, dates.start, dates.end))) continue;
           payableSlots += 1;
           if (paymentMap.get(payKey(traineeId, month))?.paid) paidCount += 1;
         }
@@ -405,7 +430,7 @@ export async function renderStats({ store, pricing, now, navigate }) {
       });
     }
 
-    if (selectedId === "__all__") {
+    if (selectedPerson === "__all__") {
       const overallPresent = Array.from(groupAttendanceStats.values()).reduce((sum, item) => sum + item.present, 0);
       const overallTotal = Array.from(groupAttendanceStats.values()).reduce((sum, item) => sum + item.total, 0);
 
@@ -466,7 +491,7 @@ export async function renderStats({ store, pricing, now, navigate }) {
       const paymentMonths = monthsInDateRange(startISO, endISO);
       const allTraineeIds = sorted.map((trainee) => trainee.id);
       const allByMonth = new Map();
-      for (const month of paymentMonths) allByMonth.set(month, new Set(allTraineeIds));
+      for (const month of paymentMonths) allByMonth.set(month, new Set(allTraineeIds.filter(id => payableInMonth(id, month))));
 
       const presentByMonth = new Map();
       for (const month of paymentMonths) presentByMonth.set(month, new Set());
@@ -531,7 +556,9 @@ export async function renderStats({ store, pricing, now, navigate }) {
           let paid = 0;
 
           for (const month of paymentMonths) {
+            const dates = monthDates(month);
             for (const traineeId of traineeIds) {
+              if (!payableInMonth(traineeId, month) || !memberships.some(membership => membership.traineeId === traineeId && membershipOverlapsRange(membership, dates.start, dates.end))) continue;
               active += 1;
               if (paymentMap.get(payKey(traineeId, month))?.paid) paid += 1;
             }
@@ -581,18 +608,19 @@ export async function renderStats({ store, pricing, now, navigate }) {
         paymentsByGroupCard.appendChild(list);
       }
       bodyRoot.appendChild(paymentsByGroupCard);
+      if (generation === bodyGeneration) outputRoot.replaceChildren(bodyRoot);
       return;
     }
 
-    const trainee = await store.get("trainees", selectedId);
+    const trainee = await store.get("trainees", selectedPerson);
     if (!trainee) return;
 
-    const memberships = membershipsByTrainee.get(selectedId) ?? [];
+    const memberships = membershipsByTrainee.get(selectedPerson) ?? [];
     const personalAttendance = computeTraineeAttendanceStats({
-      traineeId: selectedId,
+      traineeId: selectedPerson,
       memberships,
       groupById,
-      presentRows: rowsByTrainee.get(selectedId) ?? [],
+      presentRows: rowsByTrainee.get(selectedPerson) ?? [],
       startISO,
       endISO
     });
@@ -613,8 +641,10 @@ export async function renderStats({ store, pricing, now, navigate }) {
 
     const startMonth = addMonths(currentMonth, -5);
     const months = monthRange(addMonths(currentMonth, -5), currentMonth);
+    const billingStart = trainee.createdAt ? isoMonth(new Date(trainee.createdAt)) : startMonth;
     const overdueMonths = monthRange(startMonth, prevMonth).filter((month) => {
-      const payment = paymentMap.get(payKey(selectedId, month));
+      if (month < billingStart && !paymentMap.has(payKey(selectedPerson, month))) return false;
+      const payment = paymentMap.get(payKey(selectedPerson, month));
       return !payment || !payment.paid;
     });
 
@@ -628,7 +658,7 @@ export async function renderStats({ store, pricing, now, navigate }) {
     ]);
 
     const labels = months.map((month) => month.slice(5));
-    const values = months.map((month) => (paymentMap.get(payKey(selectedId, month))?.paid ? 1 : 0));
+    const values = months.map((month) => (paymentMap.get(payKey(selectedPerson, month))?.paid ? 1 : 0));
     const svg = `<svg viewBox="0 0 360 120" width="100%" height="120" role="img" aria-label="Platnosci">
 ${months
   .map((month, index) => {
@@ -662,7 +692,7 @@ ${labels
     }
     bodyRoot.appendChild(paymentCard);
 
-    const fee = await computeTraineeFee({ store, pricing }, selectedId);
+    const fee = await computeTraineeFee({ store, pricing }, selectedPerson);
     const mode = trainee.pricingMode ?? "auto";
     const amount = mode === "manual" ? Number(trainee.manualMonthlyFee ?? 0) : Number(fee.autoFee ?? 0);
     bodyRoot.appendChild(
@@ -670,6 +700,7 @@ ${labels
         el("span", { text: `Kwota domyslna: ${fmtMoney(amount, pricing.currency)} (${mode === "manual" ? "recznie" : "auto"})` })
       ])
     );
+    if (generation === bodyGeneration) outputRoot.replaceChildren(bodyRoot);
   }
 
   await renderBody();

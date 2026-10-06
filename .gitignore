@@ -1,0 +1,7 @@
+/private-data/
+/pwa/data/*
+!/pwa/data/.htaccess
+/test-results/
+/BACKUP_*/
+/backups/
+/node_modules/

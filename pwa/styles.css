@@ -570,7 +570,25 @@ input[type="time"]::-webkit-calendar-picker-indicator {
   border-color: rgba(251, 113, 133, 0.55);
 }
 
+.toast {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(760px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  max-height: calc(100dvh - 24px);
+  margin: 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  z-index: 100;
+  background: rgba(14, 22, 40, 0.98);
+}
+
 .modal {
+  position: fixed;
+  inset: 0;
+  margin: auto;
   border: none;
   padding: 0;
   background: transparent;
@@ -654,3 +672,4 @@ svg {
   display: block;
   max-width: 100%;
 }
+[hidden] { display: none !important; }

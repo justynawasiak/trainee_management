@@ -2,9 +2,8 @@
 require_once __DIR__ . '/_auth.php';
 
 $u = require_user();
-$ns = sanitize_namespace($u);
-
-$file = dirname(__DIR__) . '/data/sync_' . $ns . '.json';
+session_write_close();
+$file = sync_file_path($u);
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
 
@@ -30,4 +29,4 @@ if (!is_array($payload) && is_array($json) && isset($json['data'])) {
   $updatedAt = 0;
 }
 
-json_response(200, ['ok' => true, 'exists' => true, 'updatedAt' => $updatedAt, 'payload' => $payload]);
+json_response(200, ['ok' => true, 'exists' => true, 'revision' => (int)($json['revision'] ?? $updatedAt), 'updatedAt' => $updatedAt, 'payload' => $payload]);

@@ -2,10 +2,17 @@
 // Router for PHP built-in server: `php -S 0.0.0.0:5173 -t pwa pwa/router.php`
 // Emulates the most important .htaccess rewrites used on OVH Perso.
 
-$path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?? '/';
+$path = rawurldecode(explode('?', $_SERVER['REQUEST_URI'] ?? '/', 2)[0]);
+$segments = explode('/', $path);
+if (strpos($path, "\0") !== false || strpos($path, '\\') !== false || in_array('..', $segments, true) || in_array('.', $segments, true)) {
+  http_response_code(404);
+  return true;
+}
+$path = '/' . implode('/', array_filter($segments, function ($segment) { return $segment !== ''; }));
+$securityPath = strtolower($path);
 
 // Block direct access to stored data.
-if (strncmp($path, '/data/', 6) === 0) {
+if ($securityPath === '/data' || strncmp($securityPath, '/data/', 6) === 0 || strncmp($securityPath, '/api/_', 6) === 0) {
   http_response_code(404);
   header('Content-Type: text/plain; charset=utf-8');
   echo "Not Found";
@@ -43,10 +50,10 @@ if ($path === '/' || $path === '/index.html') {
 // Serve existing files as-is (CSS/JS/assets).
 $full = __DIR__ . $path;
 if ($path !== '/' && is_file($full)) {
+  if (substr($path, -3) === '.js') header('Cache-Control: no-cache');
   return false;
 }
 
 // Fallback: for any unknown path, still apply gate.
 require __DIR__ . '/gate.php';
 return true;
-

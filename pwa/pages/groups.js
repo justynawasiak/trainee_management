@@ -1,11 +1,25 @@
 ﻿import { DAYS, bigListItem, btn, closeModal, el, fmtSchedule, openModal, setActions, setTitle, showToast } from "../ui.js";
 
+import { addGroupMembers, isMembershipActive, modifyGroup, setMembershipActive, updateGroupSchedule } from "../logic.js";
+import { nonnegativeNumber } from "../validation.js";
+
 export async function renderGroups({ store, navigate }) {
   setTitle("Grupy");
   setActions([]);
 
   const main = el("div", { class: "container" });
-  const groups = await store.getAll("groups");
+  const [groups, trainees, memberships] = await Promise.all([
+    store.getAll("groups"),
+    store.getAll("trainees"),
+    store.getAll("memberships")
+  ]);
+  const traineeIds = new Set(trainees.map((t) => t.id));
+  const membersByGroup = new Map(groups.map((g) => [g.id, new Set()]));
+  for (const membership of memberships.filter(isMembershipActive)) {
+    if (traineeIds.has(membership.traineeId)) {
+      membersByGroup.get(membership.groupId)?.add(membership.traineeId);
+    }
+  }
   let search = "";
 
   const list = el("div", { class: "list" });
@@ -29,7 +43,7 @@ export async function renderGroups({ store, navigate }) {
       list.appendChild(
         bigListItem({
           title: g.name ?? "Grupa",
-          subtitle: fmtSchedule(g.schedule),
+          subtitle: `${fmtSchedule(g.schedule)} · Liczba osób: ${membersByGroup.get(g.id).size}`,
           onClick: () => navigate(`#/groups/detail?groupId=${encodeURIComponent(g.id)}`)
         })
       );
@@ -84,6 +98,7 @@ export async function renderGroupDetail({ store, navigate, params }) {
 
   const traineeById = new Map(trainees.map((t) => [t.id, t]));
   const roster = memberships
+    .filter(isMembershipActive)
     .slice()
     .sort((a, b) => {
       const ta = traineeById.get(a.traineeId);
@@ -128,7 +143,7 @@ function renderScheduleCard({ store, navigate, group }) {
   if (schedule.length === 0) {
     scheduleList.appendChild(el("div", { class: "sub muted", text: "Brak." }));
   } else {
-    schedule.forEach((e, idx) => {
+    schedule.forEach((e) => {
       const d = DAYS.find((x) => x.id === e.dayOfWeek)?.label ?? "?";
       scheduleList.appendChild(
         el("div", { class: "item" }, [
@@ -137,10 +152,13 @@ function renderScheduleCard({ store, navigate, group }) {
             el("div", { class: "sub", text: `Czas: ${Number(e.durationMin ?? 60)} min` })
           ]),
           btn("Usuń", async () => {
-            const next = (group.schedule ?? []).slice();
-            next.splice(idx, 1);
-            group.schedule = next;
-            await store.put("groups", group);
+            await modifyGroup(store, group.id, current => {
+              const next = (current.schedule ?? []).slice();
+              const index = next.findIndex(entry => e.id ? entry.id === e.id : JSON.stringify(entry) === JSON.stringify(e));
+              if (index === -1) throw new Error("Harmonogram zmienił się. Odśwież grupę.");
+              next.splice(index, 1);
+              return updateGroupSchedule(current, next);
+            });
             navigate(`#/groups/detail?groupId=${encodeURIComponent(group.id)}`);
           })
         ])
@@ -178,7 +196,7 @@ async function renderMembersCard({ store, navigate, groupId, trainees, roster })
           el("div", { class: "row", style: "gap:8px;justify-content:flex-end" }, [
             btn("Zmień", () => openEditMemberSessions({ store, navigate }, m.id)),
             btn("Usuń", async () => {
-              await store.delete("memberships", m.id);
+              await setMembershipActive(store, m.id, false);
               navigate(`#/groups/detail?groupId=${encodeURIComponent(groupId)}`);
             })
           ])
@@ -225,7 +243,8 @@ async function openGroupEditor(ctx, groupId) {
         const row = group ?? { id: store.uuid(), createdAt: Date.now(), schedule: [] };
         row.name = n;
         row.updatedAt = Date.now();
-        await store.put("groups", row);
+        if (group) await modifyGroup(store, row.id, current => ({ ...current, name: n, updatedAt: Date.now() }));
+        else await store.put("groups", row);
         closeModal();
         showToast("Zapisano grupę");
         navigate(`#/groups/detail?groupId=${encodeURIComponent(row.id)}`);
@@ -238,13 +257,16 @@ async function openGroupEditor(ctx, groupId) {
 }
 
 async function deleteGroup(store, groupId) {
-  const memberships = await store.getAllByIndex("memberships", "byGroup", groupId);
-  await store.runTx(["groups", "memberships"], "readwrite", (t) => {
+  await store.runTx(["groups", "memberships", "attendance", "sessionScopes"], "readwrite", (t) => {
     t.objectStore("groups").delete(groupId);
-    for (const m of memberships) t.objectStore("memberships").delete(m.id);
+    for (const name of ["memberships", "attendance", "sessionScopes"]) {
+      const target = t.objectStore(name);
+      const request = target.getAll();
+      request.onsuccess = () => {
+        for (const row of request.result) if (row.groupId === groupId) target.delete(row.id);
+      };
+    }
   });
-  const attendance = await store.getAll("attendance");
-  for (const a of attendance.filter((x) => x.groupId === groupId)) await store.delete("attendance", a.id);
 }
 
 async function openScheduleEntryEditor(ctx, groupId) {
@@ -272,12 +294,13 @@ async function openScheduleEntryEditor(ctx, groupId) {
       async (e) => {
         e.preventDefault();
         const entry = {
+          id: store.uuid(),
           dayOfWeek: Number(day.value),
           startTime: startTime.value ?? "18:00",
-          durationMin: Number(durationMin.value ?? 60)
+          durationMin: nonnegativeNumber(durationMin.value, "czas trwania", { integer: true, min: 15 })
         };
-        group.schedule = [...(group.schedule ?? []), entry];
-        await store.put("groups", group);
+        if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(entry.startTime)) throw new Error("Podaj poprawną godzinę");
+        await modifyGroup(store, group.id, current => updateGroupSchedule(current, [...(current.schedule ?? []), entry]));
         closeModal();
         navigate(`#/groups/detail?groupId=${encodeURIComponent(groupId)}`);
       },
@@ -291,7 +314,7 @@ async function openScheduleEntryEditor(ctx, groupId) {
 async function openAddMember(ctx, groupId) {
   const { store, navigate } = ctx;
   const [trainees, memberships] = await Promise.all([store.getAll("trainees"), store.getAllByIndex("memberships", "byGroup", groupId)]);
-  const existing = new Set(memberships.map((m) => m.traineeId));
+  const existing = new Set(memberships.filter(isMembershipActive).map((m) => m.traineeId));
   const options = trainees
     .filter((t) => !existing.has(t.id))
     .sort((a, b) => (a.firstName ?? "").localeCompare(b.firstName ?? "") || (a.lastName ?? "").localeCompare(b.lastName ?? ""));
@@ -387,19 +410,9 @@ async function openAddMember(ctx, groupId) {
           showToast("Zaznacz przynajmniej jedną osobę");
           return;
         }
-        const toAdd = Array.from(selected);
-        let added = 0;
-        for (const traineeId of toAdd) {
-          const m = { id: store.uuid(), groupId, traineeId, sessionsPerWeek: 1, createdAt: Date.now() };
-          try {
-            await store.put("memberships", m);
-            added += 1;
-          } catch {
-            // ignore duplicates just in case
-          }
-        }
+        await addGroupMembers(store, groupId, selected);
         closeModal();
-        showToast(`Dodano: ${added}`);
+        showToast("Zapisano przypisania do grupy");
         navigate(`#/groups/detail?groupId=${encodeURIComponent(groupId)}`);
       },
       "btn--good"
@@ -424,9 +437,15 @@ async function openEditMemberSessions(ctx, membershipId) {
       "Zapisz",
       async (e) => {
         e.preventDefault();
-        membership.sessionsPerWeek = Number(sessions.value ?? 0);
-        membership.updatedAt = Date.now();
-        await store.put("memberships", membership);
+        const sessionsPerWeek = nonnegativeNumber(sessions.value, "treningi/tydzień", { integer: true });
+        await store.runTx(["memberships"], "readwrite", transaction => {
+          const memberships = transaction.objectStore("memberships");
+          const request = memberships.get(membership.id);
+          request.onsuccess = () => {
+            if (!request.result || !isMembershipActive(request.result)) { transaction.abort(); return; }
+            memberships.put({ ...request.result, sessionsPerWeek, updatedAt: Date.now() });
+          };
+        });
         closeModal();
         navigate(`#/groups/detail?groupId=${encodeURIComponent(membership.groupId)}`);
       },
@@ -435,5 +454,4 @@ async function openEditMemberSessions(ctx, membershipId) {
   ];
   openModal({ title: "Treningi/tydzień", body, footer });
 }
-
 

@@ -1,0 +1,10 @@
+{
+  "name": "trainee-management",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node scripts/run_tests.mjs",
+    "test:browser": "node scripts/test_browser.mjs",
+    "test:backend": "python3 scripts/test_backend.py"
+  }
+}

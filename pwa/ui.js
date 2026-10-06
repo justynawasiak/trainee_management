@@ -29,7 +29,7 @@ export function el(tag, attrs = {}, children = []) {
 export function fmtMoney(value, currency = "PLN") {
   const n = Number(value ?? 0);
   if (!Number.isFinite(n)) return `0 ${currency}`;
-  return `${n.toFixed(0)} ${currency}`;
+  return `${n.toFixed(Number.isInteger(n) ? 0 : 2)} ${currency}`;
 }
 
 export function fmtSchedule(schedule) {
@@ -51,6 +51,14 @@ export function iconToggle(on) {
 
 export function bigListItem({ title, subtitle, right, onClick }) {
   const clickable = typeof onClick === "function";
+  let pending = false;
+  const activate = async () => {
+    if (pending) return;
+    pending = true;
+    try { await onClick?.(); }
+    catch (error) { showToast(error.message || "Nie udało się wykonać operacji. Spróbuj ponownie."); }
+    finally { pending = false; }
+  };
   return el(
     "div",
     {
@@ -59,9 +67,11 @@ export function bigListItem({ title, subtitle, right, onClick }) {
         ? {
             role: "button",
             tabindex: "0",
-            onclick: onClick,
+            onclick: activate,
             onkeydown: (e) => {
-              if (e.key === "Enter" || e.key === " ") onClick?.();
+              if (e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return;
+              e.preventDefault();
+              activate();
             }
           }
         : {})
@@ -80,9 +90,8 @@ export function showToast(text) {
   const toast = el(
     "div",
     {
-      class: "card",
-      style:
-        "position:fixed;left:12px;right:12px;bottom:12px;max-width:760px;margin:0 auto;z-index:10;background:rgba(14,22,40,0.98)"
+      class: "card toast",
+      role: "status"
     },
     [
       el("div", { class: "row space" }, [
@@ -91,7 +100,8 @@ export function showToast(text) {
       ])
     ]
   );
-  document.body.appendChild(toast);
+  const modal = document.getElementById("modal");
+  (modal?.open ? modal : document.body).appendChild(toast);
   setTimeout(() => toast.remove(), 1800);
 }
 
@@ -139,7 +149,16 @@ export function setActiveTab(route) {
 }
 
 export function btn(label, onClick, extraClass = "") {
-  return el("button", { type: "button", class: `btn ${extraClass}`.trim(), text: label, onclick: onClick });
+  const button = el("button", { type: "button", class: `btn ${extraClass}`.trim(), text: label, onclick: async (event) => {
+    if (button.disabled) return;
+    button.disabled = true;
+    try { await onClick(event); }
+    catch (error) {
+      if (document.getElementById("modal")?.open) showModalError(error.message || "Nie udało się zapisać zmian.");
+      else showToast(error.message || "Nie udało się wykonać operacji.");
+    } finally { button.disabled = false; }
+  } });
+  return button;
 }
 
 export function openModal({ title, body, footer }) {

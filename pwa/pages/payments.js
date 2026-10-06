@@ -1,6 +1,6 @@
 import { isoMonth } from "../db.js";
-import { computeTraineeFee, ensurePayment, setPaid } from "../logic.js";
-import { bigListItem, btn, closeModal, el, fmtMoney, iconToggle, openModal, setActions, setTitle, showModalError } from "../ui.js";
+import { computeAutoFee, isMembershipActive, setPaid, setPaymentAmount } from "../logic.js";
+import { bigListItem, btn, closeModal, el, fmtMoney, iconToggle, openModal, setActions, setTitle, showModalError, showToast } from "../ui.js";
 
 export async function renderPayments({ store, pricing, now, navigate }) {
   setTitle("Płatności");
@@ -19,6 +19,7 @@ export async function renderPayments({ store, pricing, now, navigate }) {
   let search = "";
   let selectedMonth = month;
   let groupFilter = "__all__";
+  let renderGeneration = 0;
 
   function getSelectedMonthParts() {
     const [year, monthNum] = String(selectedMonth).split("-").map((x) => Number(x));
@@ -27,14 +28,16 @@ export async function renderPayments({ store, pricing, now, navigate }) {
 
   function setSelectedMonth(year, monthNum) {
     selectedMonth = `${year}-${String(monthNum).padStart(2, "0")}`;
-    renderList();
+    refreshList();
   }
 
   const traineesInGroup = new Map();
-  for (const m of memberships) {
+  const sessionsByTrainee = new Map();
+  for (const m of memberships.filter(isMembershipActive)) {
     if (!m.groupId || !m.traineeId) continue;
     if (!traineesInGroup.has(m.groupId)) traineesInGroup.set(m.groupId, new Set());
     traineesInGroup.get(m.groupId).add(m.traineeId);
+    sessionsByTrainee.set(m.traineeId, (sessionsByTrainee.get(m.traineeId) ?? 0) + m.sessionsPerWeek);
   }
 
   const list = el("div", { class: "list" });
@@ -77,7 +80,7 @@ export async function renderPayments({ store, pricing, now, navigate }) {
   );
   yearSelect.value = String(monthParts.year);
 
-  function openAmountModal({ trainee, payment, defaultAmount }) {
+  function openAmountModal({ trainee, payment, defaultAmount, month }) {
     const input = el("input", {
       class: "input",
       type: "number",
@@ -89,7 +92,7 @@ export async function renderPayments({ store, pricing, now, navigate }) {
     openModal({
       title: `${trainee.firstName ?? ""} ${trainee.lastName ?? ""}`.trim() || "Kwota",
       body: el("div", { class: "stack" }, [
-        el("div", { class: "sub", text: `Miesiąc: ${selectedMonth}` }),
+        el("div", { class: "sub", text: `Miesiąc: ${month}` }),
         el("div", { class: "sub", text: `Domyślna: ${fmtMoney(defaultAmount, pricing.currency)}` }),
         input
       ]),
@@ -104,9 +107,9 @@ export async function renderPayments({ store, pricing, now, navigate }) {
               showModalError("Podaj poprawną kwotę.");
               return;
             }
-            await setPaid(store, selectedMonth, trainee.id, Boolean(payment?.paid), val);
+            await setPaymentAmount(store, month, trainee.id, val);
             closeModal();
-            renderList();
+            refreshList();
           },
           "btn--good"
         )
@@ -114,7 +117,15 @@ export async function renderPayments({ store, pricing, now, navigate }) {
     });
   }
 
+  function refreshList() {
+    renderList().catch(error => showToast(error.message || "Nie udało się odświeżyć płatności."));
+  }
+
   async function renderList() {
+    const generation = ++renderGeneration;
+    const month = selectedMonth;
+    const onlyUnpaid = filterUnpaid;
+    const selectedGroup = groupFilter;
     list.innerHTML = "";
     const q = (search ?? "").trim().toLowerCase();
 
@@ -125,26 +136,28 @@ export async function renderPayments({ store, pricing, now, navigate }) {
           (a.firstName ?? "").localeCompare(b.firstName ?? "") || (a.lastName ?? "").localeCompare(b.lastName ?? "")
       );
 
-    const rows = [];
-    for (const t of sorted) {
-      const fee = await computeTraineeFee({ store, pricing }, t.id);
+    const payments = await store.getAllByIndex("payments", "byMonth", month);
+    if (generation !== renderGeneration) return;
+    const paymentByTrainee = new Map(payments.map(payment => [payment.traineeId, payment]));
+    const rows = sorted.map(t => {
+      const autoFee = computeAutoFee(sessionsByTrainee.get(t.id) ?? 0, pricing);
       const mode = t.pricingMode ?? "auto";
-      const defaultAmount = mode === "manual" ? Number(t.manualMonthlyFee ?? 0) : Number(fee.autoFee ?? 0);
-      const p = await ensurePayment(store, selectedMonth, t.id, defaultAmount);
+      const defaultAmount = mode === "manual" ? Number(t.manualMonthlyFee ?? 0) : autoFee;
+      const p = paymentByTrainee.get(t.id) ?? { month, traineeId: t.id, paid: false, amount: defaultAmount };
       const paymentAmount = Number(p?.amount ?? defaultAmount ?? 0);
-      rows.push({ t, p, defaultAmount, paymentAmount });
-    }
+      return { t, p, defaultAmount, paymentAmount };
+    });
 
     const filtered = rows.filter(({ t, p }) => {
-      if (filterUnpaid && p.paid) return false;
+      if (onlyUnpaid && p.paid) return false;
       if (!q) return true;
       return `${t.firstName ?? ""} ${t.lastName ?? ""}`.toLowerCase().includes(q);
     });
 
     const groupFiltered =
-      groupFilter === "__all__"
+      selectedGroup === "__all__"
         ? filtered
-        : filtered.filter(({ t }) => traineesInGroup.get(groupFilter)?.has(t.id));
+        : filtered.filter(({ t }) => traineesInGroup.get(selectedGroup)?.has(t.id));
 
     if (groupFiltered.length === 0) {
       list.appendChild(el("div", { class: "card" }, [el("div", { class: "sub", text: "Brak wyników." })]));
@@ -167,7 +180,7 @@ export async function renderPayments({ store, pricing, now, navigate }) {
         onclick: (e) => {
           e.preventDefault();
           e.stopPropagation();
-          openAmountModal({ trainee: t, payment: p, defaultAmount });
+          openAmountModal({ trainee: t, payment: p, defaultAmount, month });
         }
       });
 
@@ -182,9 +195,10 @@ export async function renderPayments({ store, pricing, now, navigate }) {
           right,
           onClick: async () => {
             const next = !Boolean(p.paid);
+            await setPaid(store, month, t.id, next, paymentAmount);
             p.paid = next;
             rightToggle.classList.toggle("on", next);
-            await setPaid(store, selectedMonth, t.id, next, paymentAmount);
+            await renderList();
           }
         })
       );
@@ -210,7 +224,7 @@ export async function renderPayments({ store, pricing, now, navigate }) {
             class: "input",
             onchange: (e) => {
               groupFilter = e.target.value;
-              renderList();
+              refreshList();
             }
           },
           [
@@ -228,13 +242,13 @@ export async function renderPayments({ store, pricing, now, navigate }) {
             placeholder: "Szukaj osoby…",
             oninput: (e) => {
               search = e.target.value ?? "";
-              renderList();
+              refreshList();
             }
           }),
           btn("Pokaż: nieopłacone", (e) => {
             filterUnpaid = !filterUnpaid;
             e.target.textContent = filterUnpaid ? "Pokaż: nieopłacone" : "Pokaż: wszystkie";
-            renderList();
+            refreshList();
           })
         ])
       ])

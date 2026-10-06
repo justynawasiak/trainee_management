@@ -6,7 +6,7 @@ import { renderPeople } from "./pages/people.js";
 import { renderStats } from "./pages/stats.js";
 import { renderSettings } from "./pages/settings.js";
 import { el, setActiveTab } from "./ui.js";
-import { exportAll, replaceAll } from "./logic.js";
+import { createSync } from "./sync.js";
 
 const state = {
   store: null,
@@ -14,158 +14,8 @@ const state = {
   pricing: null,
   user: null,
   renderNonce: 0,
-  syncSuspended: false
+  sync: null
 };
-
-let syncTimer = null;
-let syncInFlight = false;
-let syncDirty = false;
-let syncLastAttemptAt = 0;
-let pullTimer = null;
-let lastAppliedUpdatedAt = 0;
-
-function lastKey() {
-  return state.user ? `klub_sync_updatedAt__${String(state.user).toLowerCase()}` : "klub_sync_updatedAt__anon";
-}
-
-function dirtyKey() {
-  return state.user ? `klub_sync_dirty__${String(state.user).toLowerCase()}` : "klub_sync_dirty__anon";
-}
-
-function loadLastApplied() {
-  try {
-    lastAppliedUpdatedAt = Number(localStorage.getItem(lastKey()) ?? "0") || 0;
-  } catch {
-    lastAppliedUpdatedAt = 0;
-  }
-}
-
-function saveLastApplied(v) {
-  lastAppliedUpdatedAt = Number(v || 0) || 0;
-  try {
-    localStorage.setItem(lastKey(), String(lastAppliedUpdatedAt));
-  } catch {
-    // ignore
-  }
-}
-
-function loadDirtyFlag() {
-  try {
-    syncDirty = localStorage.getItem(dirtyKey()) === "1";
-  } catch {
-    syncDirty = false;
-  }
-}
-
-function saveDirtyFlag(v) {
-  syncDirty = Boolean(v);
-  try {
-    localStorage.setItem(dirtyKey(), syncDirty ? "1" : "0");
-  } catch {
-    // ignore
-  }
-}
-
-async function pushSyncNow() {
-  if (!state.user) return;
-  if (!state.store) return;
-  if (state.syncSuspended) return;
-  if (syncInFlight) {
-    saveDirtyFlag(true);
-    return;
-  }
-  const now = Date.now();
-  // Basic backoff if server is down
-  if (now - syncLastAttemptAt < 2500) return;
-  syncLastAttemptAt = now;
-
-  syncInFlight = true;
-  try {
-    const payload = await exportAll(state.store);
-    let res = await fetch("/api/sync/push", {
-      method: "POST",
-      keepalive: true,
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    if (res.status === 404) {
-      res = await fetch("/api/sync_push.php", {
-        method: "POST",
-        keepalive: true,
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-    }
-    if (res.ok) {
-      try {
-        const json = await res.json();
-        if (json?.updatedAt) {
-          saveLastApplied(Number(json.updatedAt) || 0);
-          saveDirtyFlag(false);
-        }
-      } catch {
-        // ignore
-      }
-    }
-  } catch {
-    // ignore (offline / server error)
-  } finally {
-    syncInFlight = false;
-    if (syncDirty) {
-      syncDirty = false;
-      scheduleAutoSync();
-    }
-  }
-}
-
-function scheduleAutoSync() {
-  if (!state.user) return;
-  if (state.syncSuspended) return;
-  saveDirtyFlag(true);
-  if (syncTimer) clearTimeout(syncTimer);
-  // debounce: push after a short idle
-  syncTimer = setTimeout(() => {
-    syncTimer = null;
-    pushSyncNow();
-  }, 1200);
-}
-
-async function pullSyncIfNewer() {
-  if (!state.user) return;
-  if (!state.store) return;
-  if (state.syncSuspended) return;
-  // Avoid overwriting local changes that haven't been pushed yet
-  if (syncInFlight || syncDirty || syncTimer) return;
-
-  try {
-    let res = await fetch("/api/sync/pull", { cache: "no-store" });
-    if (res.status === 404) res = await fetch("/api/sync_pull.php", { cache: "no-store" });
-    if (!res.ok) return;
-    const json = await res.json();
-    if (!json?.exists || !json?.payload?.data) return;
-    const updatedAt = Number(json.updatedAt ?? 0) || 0;
-    if (updatedAt <= lastAppliedUpdatedAt) return;
-
-    state.syncSuspended = true;
-    await replaceAll(state.store, json.payload);
-    state.syncSuspended = false;
-    state.pricing = await state.store.get("settings", "pricing");
-    saveLastApplied(updatedAt);
-    saveDirtyFlag(false);
-    await render();
-  } catch {
-    // ignore
-  } finally {
-    state.syncSuspended = false;
-  }
-}
-
-function startAutoPull() {
-  if (pullTimer) clearInterval(pullTimer);
-  pullTimer = setInterval(() => {
-    if (document.visibilityState === "visible") pullSyncIfNewer();
-  }, 12000);
-}
 
 function routeParams() {
   const hash = location.hash || "#/attendance";
@@ -176,7 +26,7 @@ function routeParams() {
 
 function navigate(hash) {
   if (location.hash === hash) {
-    render();
+    render().catch(showAppError);
     return;
   }
   location.hash = hash;
@@ -206,6 +56,7 @@ async function render() {
     pricing: state.pricing,
     setPricing,
     user: state.user,
+    sync: state.sync,
     navigate,
     params
   };
@@ -229,78 +80,52 @@ async function render() {
 }
 
 async function init() {
-  // Detect authenticated user (Node server: /api/me, OVH PHP session: /api/me.php)
-  try {
-    const res = await fetch("/api/me", { cache: "no-store" });
-    if (res.status === 401) {
-      location.replace("/login.html");
-      return;
-    }
-    if (res.ok) {
-      const json = await res.json();
-      state.user = json?.username ?? null;
-    }
-  } catch {
-    // ignore
-  }
-
-  if (!state.user) {
-    try {
-      let res = await fetch("/api/me.php", { cache: "no-store" });
-      if (res.status === 401) {
-        location.replace("/login.html");
-        return;
-      }
-      if (res.ok) {
-        const json = await res.json();
-        state.user = json?.username ?? null;
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  state.store = await createStore({ namespace: state.user, onWrite: scheduleAutoSync });
+  let response = await fetch("/api/me", { cache: "no-store", signal: AbortSignal.timeout(15000) });
+  if (response.status === 404) response = await fetch("/api/me.php", { cache: "no-store", signal: AbortSignal.timeout(15000) });
+  if (response.status === 401) { location.replace("/login.html"); return; }
+  if (!response.ok) throw new Error("Nie można potwierdzić konta. Spróbuj ponownie.");
+  const identity = await response.json();
+  if (!identity.username || !identity.accountId) throw new Error("Zaktualizuj serwer i odśwież aplikację.");
+  state.user = identity.username;
+  state.store = await createStore({
+    accountId: identity.accountId,
+    legacyNamespace: identity.legacyNamespace,
+    onBeforeWrite: () => state.sync?.changed(),
+    onWrite: () => state.sync?.schedule()
+  });
   state.pricing = await state.store.get("settings", "pricing");
-  loadLastApplied();
-  loadDirtyFlag();
-
-  // Auto-pull from server on a fresh device (no trainees yet).
-  try {
-    const existing = await state.store.getAll("trainees");
-    if ((existing?.length ?? 0) === 0 && state.user) {
-      let res = await fetch("/api/sync/pull", { cache: "no-store" });
-      if (res.status === 404) res = await fetch("/api/sync_pull.php", { cache: "no-store" });
-      if (res.ok) {
-        const json = await res.json();
-        if (json?.exists && json?.payload?.data) {
-          state.syncSuspended = true;
-          await replaceAll(state.store, json.payload);
-          state.syncSuspended = false;
-          state.pricing = await state.store.get("settings", "pricing");
-          saveLastApplied(Number(json.updatedAt ?? 0) || 0);
-          saveDirtyFlag(false);
-        }
-      }
+  state.sync = createSync({
+    store: state.store,
+    accountId: identity.accountId,
+    legacyNamespace: identity.legacyNamespace,
+    legacyStateKey: identity.legacyNamespace ? identity.username.toLowerCase() : null,
+    initialDirty: state.store.migratedLegacy,
+    resetState: state.store.freshDatabase,
+    onStatus: message => {
+      const status = document.getElementById("syncStatus");
+      if (status) { status.textContent = message; status.hidden = !message; }
+    },
+    onApplied: async () => {
+      state.pricing = await state.store.get("settings", "pricing");
+      await render();
     }
-  } catch {
-    // ignore
-  }
-
-  if (syncDirty) {
-    await pushSyncNow();
-  }
-
-  window.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") pushSyncNow();
-    if (document.visibilityState === "visible") pullSyncIfNewer();
   });
-  window.addEventListener("pagehide", () => {
-    pushSyncNow();
+  if (state.store.freshDatabase) await state.sync.pull({ force: true });
+  else if (state.sync.dirty) await state.sync.push();
+  else await state.sync.pull();
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      if (state.sync.dirty) state.sync.push();
+      else state.sync.pull();
+    }
   });
-  startAutoPull();
+  window.addEventListener("online", () => state.sync.dirty ? state.sync.push() : state.sync.pull());
+  const pullTimer = setInterval(() => {
+    if (document.visibilityState === "visible" && !state.sync.dirty) state.sync.pull();
+  }, 12000);
+  window.addEventListener("pagehide", () => { clearInterval(pullTimer); state.sync.stop(); }, { once: true });
 
-  window.addEventListener("hashchange", () => render());
+  window.addEventListener("hashchange", () => render().catch(showAppError));
 
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker
@@ -326,8 +151,7 @@ async function init() {
   await render();
 }
 
-init().catch((err) => {
-  console.error(err);
+function showAppError(err) {
   const mainRoot = document.getElementById("main");
   mainRoot.innerHTML = "";
   mainRoot.appendChild(
@@ -338,4 +162,6 @@ init().catch((err) => {
       ])
     ])
   );
-});
+}
+
+init().catch(showAppError);

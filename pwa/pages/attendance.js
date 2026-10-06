@@ -1,5 +1,5 @@
 ﻿import { isoDate } from "../db.js";
-import { getSessionScopes, groupHasTrainingOnDate, setAttendance, setSessionScopes } from "../logic.js";
+import { getSessionScopes, groupHasScheduledTrainingOnDate, groupHasTrainingOnDate, isGroupSessionCancelled, membershipIncludesDate, scheduleForDate, setAttendance, setGroupAttendance, setGroupSessionCancelled, setSessionScopes } from "../logic.js";
 import { DAYS, bigListItem, btn, closeModal, el, fmtSchedule, iconToggle, openModal, setActions, setTitle, showToast } from "../ui.js";
 
 function isoFromParts(y, m, d) {
@@ -10,7 +10,7 @@ function dateLabelForGroup(group, dateISO) {
   const d = new Date(`${dateISO}T12:00:00`);
   const dow = ((d.getDay() + 6) % 7) + 1; // Mon=1..Sun=7
   const dayName = DAYS.find((x) => x.id === dow)?.label ?? "";
-  const times = (group?.schedule ?? [])
+  const times = scheduleForDate(group, d)
     .filter((e) => Number(e.dayOfWeek) === dow && e.startTime)
     .map((e) => e.startTime)
     .sort((a, b) => String(a).localeCompare(String(b)));
@@ -48,15 +48,14 @@ function monthTitle(date) {
 }
 
 function trainingDaysInMonth(group, viewMonthDate) {
-  const scheduleDays = new Set((group?.schedule ?? []).map((e) => Number(e.dayOfWeek)).filter((x) => Number.isFinite(x)));
   const y = viewMonthDate.getFullYear();
   const m = viewMonthDate.getMonth() + 1;
   const daysInMonth = new Date(y, m, 0).getDate();
   const out = new Set();
   for (let d = 1; d <= daysInMonth; d++) {
     const dt = new Date(y, m - 1, d, 12, 0, 0);
-    const dow = ((dt.getDay() + 6) % 7) + 1; // Mon=1..Sun=7
-    if (scheduleDays.has(dow)) out.add(isoFromParts(y, m, d));
+    const dateISO = isoFromParts(y, m, d);
+    if (groupHasTrainingOnDate(group, dt)) out.add(dateISO);
   }
   return out;
 }
@@ -144,6 +143,21 @@ function calendar({ group, groups, selectedISO, onSelect }) {
   return root;
 }
 
+function sessionCancellationButton({ store, group, dateISO, navigate, route }) {
+  const cancelled = isGroupSessionCancelled(group, dateISO);
+  const button = btn(cancelled ? "Przywróć zajęcia" : "Odwołaj zajęcia", async () => {
+    try {
+      await setGroupSessionCancelled(store, group.id, dateISO, !cancelled);
+      showToast(cancelled ? "Przywrócono zajęcia" : "Odwołano zajęcia");
+      navigate(route);
+    } catch {
+      showToast("Nie udało się zapisać statusu zajęć. Spróbuj ponownie.");
+    }
+  }, cancelled ? "btn--good" : "danger");
+  button.setAttribute("aria-label", `${cancelled ? "Przywróć" : "Odwołaj"} zajęcia: ${group.name ?? "Grupa"}, ${dateISO}`);
+  return button;
+}
+
 export async function renderAttendance({ store, now, setNow, navigate }) {
   setTitle("Obecność");
   setActions([]);
@@ -152,7 +166,7 @@ export async function renderAttendance({ store, now, setNow, navigate }) {
   const dateISO = isoDate(now);
 
   const [groups, trainees] = await Promise.all([store.getAll("groups"), store.getAll("trainees")]);
-  const todayGroups = groups.filter((g) => groupHasTrainingOnDate(g, now));
+  const todayGroups = groups.filter((g) => groupHasScheduledTrainingOnDate(g, now));
   const todayDow = ((now.getDay() + 6) % 7) + 1; // Mon=1..Sun=7
 
   function firstStartTimeForToday(group) {
@@ -244,16 +258,20 @@ export async function renderAttendance({ store, now, setNow, navigate }) {
   });
 
   for (const g of sortedGroups) {
-    list.appendChild(
-      bigListItem({
-        title: g.name ?? "Grupa",
-        subtitle: fmtSchedule(g.schedule),
-        onClick: () =>
-          navigate(
-            `#/attendance/group?groupId=${encodeURIComponent(g.id)}&date=${encodeURIComponent(dateISO)}`
-          )
-      })
-    );
+    const cancelled = isGroupSessionCancelled(g, dateISO);
+    const item = bigListItem({
+      title: g.name ?? "Grupa",
+      subtitle: `${fmtSchedule(g.schedule)}${cancelled ? " · Zajęcia odwołane" : ""}`,
+      onClick: () =>
+        navigate(
+          `#/attendance/group?groupId=${encodeURIComponent(g.id)}&date=${encodeURIComponent(dateISO)}`
+        )
+    });
+    item.setAttribute("style", "flex:1;min-width:180px");
+    list.appendChild(el("div", { class: "card row space wrap" }, [
+      item,
+      sessionCancellationButton({ store, group: g, dateISO, navigate, route: "#/attendance" })
+    ]));
   }
   main.appendChild(list);
   return main;
@@ -283,8 +301,23 @@ export async function renderAttendanceGroup({ store, now, navigate, params }) {
 
   const dateLabel = dateLabelForGroup(group, dateISO);
 
+  if (isGroupSessionCancelled(group, dateISO)) {
+    main.appendChild(el("div", { class: "card card--hero" }, [
+      el("div", { class: "title", text: group.name ?? "Grupa" }),
+      el("div", { class: "sub", text: dateLabel }),
+      el("div", { class: "pill danger", text: "Zajęcia odwołane" }),
+      el("div", { class: "sub", text: "Ten dzień nie jest uwzględniany w statystykach obecności. Zapisane obecności są zachowane." }),
+      el("div", { class: "row wrap", style: "gap:8px" }, [
+        btn("←", () => navigate("#/attendance"), "btn--back"),
+        sessionCancellationButton({ store, group, dateISO, navigate, route: `#/attendance/group?groupId=${encodeURIComponent(groupId)}&date=${encodeURIComponent(dateISO)}` })
+      ])
+    ]));
+    return main;
+  }
+
   const traineeById = new Map(trainees.map((t) => [t.id, t]));
   const roster = memberships
+    .filter(membership => membershipIncludesDate(membership, dateISO))
     .map((m) => traineeById.get(m.traineeId))
     .filter(Boolean)
     .sort(
@@ -349,10 +382,10 @@ export async function renderAttendanceGroup({ store, now, navigate, params }) {
           right,
           onClick: async () => {
             const next = !(presentByTrainee.get(t.id) ?? false);
+            await setAttendance(store, dateISO, groupId, t.id, next);
             presentByTrainee.set(t.id, next);
             rightToggle.classList.toggle("on", next);
             updateStats();
-            await setAttendance(store, dateISO, groupId, t.id, next);
           }
         })
       );
@@ -426,8 +459,9 @@ export async function renderAttendanceGroup({ store, now, navigate, params }) {
                 btn(
                   "Zapisz",
                   async () => {
-                    selectedScopeIds = Array.from(selected);
-                    await setSessionScopes(store, dateISO, groupId, selectedScopeIds);
+                    const nextScopeIds = Array.from(selected);
+                    await setSessionScopes(store, dateISO, groupId, nextScopeIds);
+                    selectedScopeIds = nextScopeIds;
                     closeModal();
                     renderSelectedScopes();
                   },
@@ -501,13 +535,13 @@ export async function renderAttendanceGroup({ store, now, navigate, params }) {
         stats,
         el("div", { class: "row", style: "gap:8px;flex-wrap:wrap;justify-content:flex-end" }, [
           btn("Wszyscy obecni", async () => {
-            await Promise.all(roster.map((t) => setAttendance(store, dateISO, groupId, t.id, true)));
+            await setGroupAttendance(store, dateISO, groupId, roster.map(t => t.id), true);
             roster.forEach((t) => presentByTrainee.set(t.id, true));
             showToast("Zapisano: wszyscy obecni");
             renderList();
           }),
           btn("Wszyscy nieobecni", async () => {
-            await Promise.all(roster.map((t) => setAttendance(store, dateISO, groupId, t.id, false)));
+            await setGroupAttendance(store, dateISO, groupId, roster.map(t => t.id), false);
             roster.forEach((t) => presentByTrainee.set(t.id, false));
             showToast("Zapisano: wszyscy nieobecni");
             renderList();
@@ -517,7 +551,7 @@ export async function renderAttendanceGroup({ store, now, navigate, params }) {
     ])
   );
 
-  if (memberships.length === 0) {
+  if (roster.length === 0) {
     list.appendChild(
       el("div", { class: "card" }, [
         el("div", { class: "title", text: "Brak osób w tej grupie" }),
@@ -534,5 +568,4 @@ export async function renderAttendanceGroup({ store, now, navigate, params }) {
   main.appendChild(list);
   return main;
 }
-
 

@@ -1,62 +1,48 @@
 <?php
 require_once __DIR__ . '/_auth.php';
+require_once __DIR__ . '/_payload.php';
 
-$u = require_user();
-$ns = sanitize_namespace($u);
-
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-  json_response(405, ['ok' => false]);
-}
-
+$user = require_user();
+session_write_close();
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') json_response(405, ['ok' => false]);
 require_same_origin_post();
 $body = read_json_body();
-if (!is_array($body)) {
-  json_response(400, ['ok' => false, 'error' => 'bad_json']);
+if (!valid_sync_payload($body)) json_response(400, ['ok' => false, 'error' => 'bad_payload']);
+if (!isset($body['baseRevision']) || !is_int($body['baseRevision']) || $body['baseRevision'] < 0) {
+  json_response(428, ['ok' => false, 'error' => 'revision_required']);
 }
 
-// Basic validation + size limit (best-effort)
-$encoded = json_encode($body, JSON_UNESCAPED_UNICODE);
-if ($encoded === false) {
-  json_response(400, ['ok' => false, 'error' => 'bad_payload']);
-}
-if (strlen($encoded) > 2 * 1024 * 1024) {
-  json_response(413, ['ok' => false, 'error' => 'too_large']);
-}
-
-if (!isset($body['version']) || !isset($body['data']) || !is_array($body['data'])) {
-  json_response(400, ['ok' => false, 'error' => 'bad_payload']);
-}
-
-$allowedStores = ['trainees', 'groups', 'memberships', 'attendance', 'payments', 'settings', 'scopes', 'sessionScopes'];
-foreach ($allowedStores as $storeName) {
-  if (isset($body['data'][$storeName]) && !is_array($body['data'][$storeName])) {
-    json_response(400, ['ok' => false, 'error' => 'bad_payload']);
+$file = sync_file_path($user);
+$lock = fopen($file . '.lock', 'c');
+if ($lock === false || !flock($lock, LOCK_EX)) json_response(500, ['ok' => false, 'error' => 'lock_failed']);
+$temporary = false;
+$response = ['ok' => false, 'error' => 'write_failed'];
+$status = 500;
+try {
+  $current = is_file($file) ? json_decode((string)file_get_contents($file), true) : null;
+  if (is_file($file) && !is_array($current)) throw new RuntimeException('Corrupt server snapshot');
+  $revision = (int)($current['revision'] ?? $current['updatedAt'] ?? 0);
+  if ($body['baseRevision'] !== $revision) {
+    $status = 409;
+    $response = ['ok' => false, 'error' => 'revision_conflict', 'revision' => $revision];
+  } else {
+    unset($body['baseRevision']);
+    $revision++;
+    $updatedAt = time();
+    $encoded = json_encode(['revision' => $revision, 'updatedAt' => $updatedAt, 'username' => $user, 'payload' => $body], JSON_UNESCAPED_UNICODE);
+    if ($encoded === false) throw new RuntimeException('Encoding failed');
+    $temporary = tempnam(storage_directory(), '.sync-');
+    if ($temporary === false || !chmod($temporary, 0600) || file_put_contents($temporary, $encoded, LOCK_EX) !== strlen($encoded) || !rename($temporary, $file)) {
+      throw new RuntimeException('Snapshot replacement failed');
+    }
+    $status = 200;
+    $response = ['ok' => true, 'revision' => $revision, 'updatedAt' => $updatedAt];
   }
+} catch (Throwable $error) {
+  error_log('Klub: snapshot persistence failed');
+} finally {
+  if ($temporary !== false && is_file($temporary)) unlink($temporary);
+  flock($lock, LOCK_UN);
+  fclose($lock);
 }
-
-$dir = dirname(__DIR__) . '/data';
-if (!is_dir($dir)) {
-  @mkdir($dir, 0755, true);
-}
-
-$file = $dir . '/sync_' . $ns . '.json';
-$tmp = $file . '.tmp';
-
-$updatedAt = time();
-$wrapped = json_encode([
-  'updatedAt' => $updatedAt,
-  'username' => $u,
-  'payload' => $body
-], JSON_UNESCAPED_UNICODE);
-if ($wrapped === false) {
-  json_response(400, ['ok' => false, 'error' => 'bad_payload']);
-}
-
-$ok = @file_put_contents($tmp, $wrapped, LOCK_EX);
-if ($ok === false) {
-  json_response(500, ['ok' => false, 'error' => 'write_failed']);
-}
-@rename($tmp, $file);
-@chmod($file, 0600);
-
-json_response(200, ['ok' => true, 'updatedAt' => $updatedAt]);
+json_response($status, $response);

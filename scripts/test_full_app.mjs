@@ -1,0 +1,98 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+
+// The isolated PHP test creates this short-lived credential file outside the repository.
+const fixture = JSON.parse(await readFile(process.argv[2], "utf8"));
+const moduleName = process.argv[3] || process.env.PLAYWRIGHT_MODULE;
+const { chromium } = await import(moduleName ? pathToFileURL(resolve(moduleName)).href : "playwright");
+const browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL ?? "chrome", headless: true });
+try {
+  const page = await browser.newPage({ timezoneId: "Europe/Warsaw" });
+  const errors = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.goto(fixture.base);
+  await page.locator("#username").fill(fixture.username);
+  await page.locator("#password").fill(fixture.password);
+  await page.locator('button[type="submit"]').click();
+  await page.waitForURL(url => url.hash === "#/attendance");
+  await page.locator("#main").getByText("Brak grup", { exact: true }).waitFor();
+  const route = async hash => { await page.evaluate(value => { location.hash = value; }, hash); };
+  const main = page.locator("#main");
+  const save = () => page.locator("#modalFooter").getByRole("button", { name: "Zapisz", exact: true }).click();
+  await route("#/groups");
+  await main.getByRole("button", { name: "Dodaj", exact: true }).click();
+  await page.getByPlaceholder("Nazwa grupy").fill("Browser Group");
+  await save();
+  await page.waitForURL(url => url.hash.startsWith("#/groups/detail"));
+  const groupId = new URLSearchParams(page.url().split("?")[1]).get("groupId");
+  await main.getByRole("button", { name: "Dodaj wpis", exact: true }).click();
+  const dow = await page.evaluate(() => new Date().getDay() || 7);
+  await page.locator("#modalBody select").selectOption(String(dow));
+  await page.locator("#modalFooter").getByRole("button", { name: "Dodaj", exact: true }).click();
+  await page.locator("#modal").waitFor({ state: "hidden" });
+
+  await route("#/people");
+  await main.getByRole("button", { name: "Dodaj", exact: true }).click();
+  await page.getByPlaceholder("Imię", { exact: true }).fill("Browser");
+  await page.getByPlaceholder("Nazwisko", { exact: true }).fill("Person");
+  await page.locator("#modalBody").getByRole("button", { name: "Edytuj", exact: true }).click();
+  await page.locator('#modalBody input[type="checkbox"]').check();
+  await save();
+  await page.getByPlaceholder("Imię", { exact: true }).waitFor();
+  await save();
+  await main.getByText("Browser Person", { exact: true }).waitFor();
+  await route("#/groups");
+  await main.getByText(/Liczba osób: 1/).waitFor();
+  console.log("PASS: complete authenticated group/person workflow");
+
+  await route("#/attendance");
+  await main.getByRole("button", { name: /^Odwołaj zajęcia:/ }).click();
+  await main.getByText(/Zajęcia odwołane/).waitFor();
+  await main.getByRole("button", { name: /^Przywróć zajęcia:/ }).click();
+  const dateISO = await page.evaluate(async () => (await import("/db.js")).isoDate(new Date()));
+  await route(`#/attendance/group?groupId=${encodeURIComponent(groupId)}&date=${dateISO}`);
+  await main.getByRole("button", { name: "Wszyscy obecni", exact: true }).click();
+  await main.getByText("Obecni: 1/1", { exact: true }).waitFor();
+  await route("#/payments");
+  await main.getByText(/Kwota: 120/).waitFor();
+  await main.getByText("Browser Person", { exact: true }).click();
+  await main.getByText("Brak wyników.", { exact: true }).waitFor();
+  await route("#/stats");
+  await main.getByText("Obecnosc: 1/1 (100%).", { exact: true }).waitFor();
+  let snapshot;
+  const syncDeadline = Date.now() + 15000;
+  do {
+    snapshot = await page.evaluate(async () => (await fetch("/api/sync/pull", { cache: "no-store" })).json());
+    if (snapshot.revision > 0 && snapshot.payload?.data?.payments?.some(payment => payment.paid)) break;
+    await new Promise(resolve => setTimeout(resolve, 200));
+  } while (Date.now() < syncDeadline);
+  assert.ok(snapshot.revision > 0);
+  assert.equal(snapshot.payload.data.trainees.length, 1);
+  assert.equal(snapshot.payload.data.memberships.length, 1);
+  assert.equal(snapshot.payload.data.attendance[0].present, true);
+  assert.equal(snapshot.payload.data.payments[0].paid, true);
+  console.log("PASS: full attendance, cancellation, payment, statistics and server synchronization");
+
+  const second = await browser.newPage({ timezoneId: "Europe/Warsaw" });
+  await second.goto(fixture.base);
+  await second.locator("#username").fill(fixture.username);
+  await second.locator("#password").fill(fixture.password);
+  await second.locator('button[type="submit"]').click();
+  await second.waitForURL(url => url.hash === "#/attendance");
+  await second.locator("#main").getByText("Browser Group", { exact: true }).waitFor();
+  await second.evaluate(() => { location.hash = "#/people"; });
+  await second.locator("#main").getByText("Browser Person", { exact: true }).waitFor();
+  await route("#/settings");
+  assert.equal(await main.getByRole("button", { name: "Wyloguj i usuń dane lokalne", exact: true }).count(), 0);
+  await main.getByRole("button", { name: "Wyloguj", exact: true }).click();
+  await page.locator("#username").waitFor();
+  await page.locator("#username").fill(fixture.username);
+  await page.locator("#password").fill(fixture.password);
+  await page.locator('button[type="submit"]').click();
+  await page.waitForURL(url => url.hash === "#/attendance");
+  await main.getByText("Browser Group", { exact: true }).waitFor();
+  assert.deepEqual(errors, []);
+  console.log("PASS: fresh-device pull, standard logout/login and no browser runtime errors");
+} finally { await browser.close(); }

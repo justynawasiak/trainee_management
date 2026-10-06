@@ -1,5 +1,6 @@
 ﻿import { normalizeEmail, normalizePhone } from "../db.js";
-import { computeTraineeFee } from "../logic.js";
+import { computeTraineeFee, isMembershipActive, saveTrainee } from "../logic.js";
+import { nonnegativeNumber } from "../validation.js";
 import { bigListItem, btn, closeModal, el, openModal, setActions, setTitle, showModalError, showToast } from "../ui.js";
 
 export async function renderPeople({ store, pricing, navigate }) {
@@ -73,6 +74,8 @@ async function openTraineeEditor(ctx, traineeId) {
     traineeId ? store.getAllByIndex("memberships", "byTrainee", traineeId) : Promise.resolve([])
   ]);
 
+  const draftRow = trainee ? { ...trainee } : { id: store.uuid(), createdAt: Date.now() };
+
   const fee = trainee
     ? await computeTraineeFee({ store, pricing }, trainee.id)
     : { totalSessionsPerWeek: 0, autoFee: 0, currency: pricing?.currency ?? "PLN" };
@@ -103,7 +106,7 @@ async function openTraineeEditor(ctx, traineeId) {
   };
 
   const groupOptions = groups.slice().sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
-  const selectedGroupIds = new Set(memberships.map((membership) => membership.groupId));
+  const selectedGroupIds = new Set(memberships.filter(isMembershipActive).map((membership) => membership.groupId));
   const groupsSection = el("div", { class: "stack", style: "gap:10px" }, []);
   const groupsHeader = el("div", { class: "row space wrap" }, [
     el("div", { class: "title", text: "Grupy" }),
@@ -169,34 +172,15 @@ async function openTraineeEditor(ctx, traineeId) {
           lastName.focus();
           return;
         }
-        const row = trainee ?? { id: store.uuid(), createdAt: Date.now() };
+        const row = { ...draftRow };
         row.firstName = fn;
         row.lastName = ln;
         row.phone = normalizePhone(phone.value);
         row.email = normalizeEmail(email.value);
         row.pricingMode = pricingMode.value;
-        row.manualMonthlyFee = pricingMode.value === "manual" ? Number(manualFee.value ?? 0) : null;
+        row.manualMonthlyFee = pricingMode.value === "manual" ? nonnegativeNumber(manualFee.value, "kwota miesięczna") : null;
         row.updatedAt = Date.now();
-        await store.put("trainees", row);
-
-        const existingByGroupId = new Map(memberships.map((membership) => [membership.groupId, membership]));
-        const nextGroupIds = new Set(selectedGroupIds);
-        await store.runTx(["memberships"], "readwrite", (t) => {
-          const membershipStore = t.objectStore("memberships");
-          for (const membership of memberships) {
-            if (!nextGroupIds.has(membership.groupId)) membershipStore.delete(membership.id);
-          }
-          for (const groupId of nextGroupIds) {
-            if (existingByGroupId.has(groupId)) continue;
-            membershipStore.put({
-              id: store.uuid(),
-              groupId,
-              traineeId: row.id,
-              sessionsPerWeek: 1,
-              createdAt: Date.now()
-            });
-          }
-        });
+        await saveTrainee(store, row, new Set(selectedGroupIds));
 
         closeModal();
         showToast("Zapisano osobę");
@@ -232,12 +216,13 @@ async function openTraineeEditor(ctx, traineeId) {
       );
     }
 
-    openModal({
+    const modal = openModal({
       title: "Edytuj grupy",
       body: el("div", { class: "stack" }, [checklist]),
       footer: [
         el("button", { class: "btn", value: "cancel", text: "Anuluj" }),
-        btn("Zapisz", () => {
+        btn("Zapisz", (e) => {
+          e.preventDefault();
           selectedGroupIds.clear();
           draft.forEach((groupId) => selectedGroupIds.add(groupId));
           renderSelectedInfo();
@@ -245,19 +230,21 @@ async function openTraineeEditor(ctx, traineeId) {
         }, "btn--good")
       ]
     });
+    modal.addEventListener("close", () => {
+      openModal({ title: trainee ? "Edytuj osobę" : "Dodaj osobę", body, footer });
+    }, { once: true });
   }
 }
 
 async function deleteTrainee(store, traineeId) {
-  const memberships = await store.getAllByIndex("memberships", "byTrainee", traineeId);
-  await store.runTx(["trainees", "memberships"], "readwrite", (t) => {
-    t.objectStore("trainees").delete(traineeId);
-    for (const m of memberships) t.objectStore("memberships").delete(m.id);
+  await store.runTx(["trainees", "memberships", "attendance", "payments"], "readwrite", transaction => {
+    transaction.objectStore("trainees").delete(traineeId);
+    for (const name of ["memberships", "attendance", "payments"]) {
+      const target = transaction.objectStore(name);
+      const request = target.getAll();
+      request.onsuccess = () => {
+        for (const row of request.result) if (row.traineeId === traineeId) target.delete(row.id);
+      };
+    }
   });
-
-  const attend = await store.getAllByIndex("attendance", "byTrainee", traineeId);
-  for (const a of attend) await store.delete("attendance", a.id);
-
-  const payments = await store.getAll("payments");
-  for (const p of payments.filter((x) => x.traineeId === traineeId)) await store.delete("payments", p.id);
 }

@@ -2,47 +2,15 @@
 require_once __DIR__ . '/_util.php';
 
 function users_file_path() {
-  return dirname(__DIR__) . '/data/users.json';
-}
-
-function ensure_users_dir() {
-  $dir = dirname(users_file_path());
-  if (!is_dir($dir)) {
-    @mkdir($dir, 0755, true);
-  }
-}
-
-function ensure_default_users_file() {
-  if (!is_local_runtime()) return;
-  ensure_users_dir();
-  $file = users_file_path();
-  if (file_exists($file)) return;
-
-  $users = [];
-  $defaults = [
-    ['username' => 'Arek', 'password' => 'EarlGrey011'],
-    ['username' => 'Justyna', 'password' => 'EarlGrey011']
-  ];
-
-  foreach ($defaults as $u) {
-    $users[] = [
-      'username' => $u['username'],
-      'passwordHash' => password_hash($u['password'], PASSWORD_BCRYPT),
-      'createdAt' => time()
-    ];
-  }
-
-  $payload = json_encode(['version' => 1, 'users' => $users], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-  @file_put_contents($file, $payload, LOCK_EX);
+  return migrate_private_file('users.json', 'users.json');
 }
 
 function load_users() {
-  ensure_default_users_file();
   if (!file_exists(users_file_path())) return [];
   $raw = @file_get_contents(users_file_path());
-  if ($raw === false) return [];
+  if ($raw === false) throw new RuntimeException('Account storage unavailable');
   $json = json_decode($raw, true);
-  if (!is_array($json) || !isset($json['users']) || !is_array($json['users'])) return [];
+  if (!is_array($json) || !isset($json['users']) || !is_array($json['users'])) throw new RuntimeException('Account storage is corrupt');
   return $json['users'];
 }
 
@@ -103,48 +71,51 @@ function sanitize_namespace($input) {
   return $s;
 }
 
+function account_id($username) { return hash('sha256', (string)$username); }
+
+function legacy_namespace_for($username) {
+  $namespace = sanitize_namespace($username);
+  if ($namespace === '') return null;
+  $matches = 0;
+  foreach (load_users() as $user) {
+    if (sanitize_namespace($user['username'] ?? '') === $namespace) $matches++;
+  }
+  return $matches === 1 ? $namespace : null;
+}
+
+function sync_file_path($username) {
+  $name = 'sync_' . account_id($username) . '.json';
+  $legacy = legacy_namespace_for($username);
+  if ($legacy !== null) return migrate_private_file($name, 'sync_' . $legacy . '.json');
+  return storage_directory() . '/' . $name;
+}
+
 function rate_key() {
   $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
   return substr(hash('sha256', (string)$ip), 0, 16);
 }
 
 function rate_file() {
-  return rtrim(sys_get_temp_dir(), '/\\') . '/klub_login_' . rate_key() . '.json';
-}
-
-function rate_read() {
-  $raw = @file_get_contents(rate_file());
-  if ($raw === false) return [];
-  $json = json_decode($raw, true);
-  if (!is_array($json)) return [];
-  return $json;
-}
-
-function rate_write($arr) {
-  @file_put_contents(rate_file(), json_encode($arr), LOCK_EX);
+  return storage_directory() . '/login_rate_' . rate_key() . '.json';
 }
 
 function rate_check_or_429() {
+  $file = rate_file();
+  $handle = fopen($file, 'c+');
+  if ($handle === false || !flock($handle, LOCK_EX)) json_response(503, ['ok' => false, 'error' => 'rate_limit_unavailable']);
+  chmod($file, 0600);
   $now = time();
-  $window = 15 * 60;
-  $limit = 25;
-
-  $arr = rate_read();
-  $arr = array_values(array_filter($arr, function($t) use ($now, $window) {
-    return is_int($t) && ($now - $t) <= $window;
+  $attempts = json_decode((string)stream_get_contents($handle), true);
+  if (!is_array($attempts)) $attempts = [];
+  $attempts = array_values(array_filter($attempts, function ($timestamp) use ($now) {
+    return is_int($timestamp) && $timestamp >= $now - 900;
   }));
-
-  if (count($arr) >= $limit) {
-    json_response(429, ['ok' => false, 'error' => 'too_many_attempts']);
-  }
-
-  // write back trimmed list
-  rate_write($arr);
-}
-
-function rate_record_fail() {
-  $now = time();
-  $arr = rate_read();
-  $arr[] = $now;
-  rate_write($arr);
+  $limited = count($attempts) >= 25;
+  if (!$limited) $attempts[] = $now;
+  rewind($handle);
+  $encoded = json_encode($attempts);
+  $saved = ftruncate($handle, 0) && fwrite($handle, $encoded) === strlen($encoded) && fflush($handle);
+  flock($handle, LOCK_UN); fclose($handle);
+  if (!$saved) json_response(503, ['ok' => false, 'error' => 'rate_limit_unavailable']);
+  if ($limited) json_response(429, ['ok' => false, 'error' => 'too_many_attempts']);
 }

@@ -1,20 +1,26 @@
 ﻿import { exportAll, replaceAll } from "../logic.js";
+import { nonnegativeNumber } from "../validation.js";
 import { btn, closeModal, el, openModal, setActions, setTitle, showModalError, showToast } from "../ui.js";
 
-async function doLogout() {
+async function doLogout(sync) {
+  if (sync?.dirty && !(await sync.push())) {
+    showToast("Najpierw zsynchronizuj lub wyeksportuj dane. Wylogowanie wstrzymano.");
+    return;
+  }
   try {
     let res = await fetch("/api/logout", { method: "POST" });
-    if (res.status === 404) {
-      await fetch("/api/logout.php", { method: "POST" });
-    }
+    if (res.status === 404) res = await fetch("/api/logout.php", { method: "POST" });
+    if (!res.ok) throw new Error("Logout failed");
   } catch {
-    // ignore
+    showToast("Nie udało się wylogować. Spróbuj ponownie.");
+    return;
   }
+  sync?.stop();
 
   try {
     if ("serviceWorker" in navigator) {
       const regs = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(regs.map((r) => r.unregister()));
+      await Promise.all(regs.filter(registration => registration.scope === new URL("./", location.href).href).map(registration => registration.unregister()));
     }
   } catch {
     // ignore
@@ -23,7 +29,7 @@ async function doLogout() {
   try {
     if ("caches" in window) {
       const keys = await caches.keys();
-      await Promise.all(keys.map((k) => caches.delete(k)));
+      await Promise.all(keys.filter(key => key.startsWith("klub-cache-")).map(key => caches.delete(key)));
     }
   } catch {
     // ignore
@@ -32,7 +38,7 @@ async function doLogout() {
   location.href = "/";
 }
 
-export async function renderSettings({ store, pricing, setPricing, navigate, user }) {
+export async function renderSettings({ store, pricing, setPricing, navigate, user, sync }) {
   setTitle("Ustawienia");
   setActions([]);
 
@@ -42,8 +48,8 @@ export async function renderSettings({ store, pricing, setPricing, navigate, use
     main.appendChild(
       el("div", { class: "card card--hero" }, [
         el("div", { class: "title", text: user }),
-        el("div", { class: "row", style: "justify-content:flex-end;margin-top:10px" }, [
-          btn("Wyloguj", doLogout, "btn--ghost")
+        el("div", { class: "row", style: "justify-content:flex-end;margin-top:10px;gap:8px;flex-wrap:wrap" }, [
+          btn("Wyloguj", () => doLogout(sync), "btn--ghost")
         ])
       ])
     );
@@ -104,9 +110,11 @@ export async function renderSettings({ store, pricing, setPricing, navigate, use
           "Zapisz",
           async () => {
             const next = {};
-            for (const [k, input] of inputs) next[String(k)] = Number(input.value ?? 0);
-            const all = (allInput.value ?? "").trim();
-            if (all !== "") next.all = Number(all);
+            try {
+              for (const [k, input] of inputs) next[String(k)] = nonnegativeNumber(input.value, "kwota");
+              const all = (allInput.value ?? "").trim();
+              if (all !== "") next.all = nonnegativeNumber(all, "kwota wszystkich treningów");
+            } catch (error) { showToast(error.message); return; }
             const updated = { ...pricing, feeBySessionsPerWeek: next };
             await store.put("settings", updated);
             setPricing(updated);
@@ -128,7 +136,16 @@ export async function renderSettings({ store, pricing, setPricing, navigate, use
       footer: [
         scope
           ? btn("Usuń", async () => {
-              await store.delete("scopes", scope.id);
+              await store.runTx(["scopes", "sessionScopes"], "readwrite", transaction => {
+                transaction.objectStore("scopes").delete(scope.id);
+                const sessions = transaction.objectStore("sessionScopes");
+                const request = sessions.getAll();
+                request.onsuccess = () => {
+                  for (const row of request.result) {
+                    if (row.scopeIds?.includes(scope.id)) sessions.put({ ...row, scopeIds: row.scopeIds.filter(id => id !== scope.id) });
+                  }
+                };
+              });
               closeModal();
               navigate("#/settings");
             })
@@ -173,7 +190,9 @@ export async function renderSettings({ store, pricing, setPricing, navigate, use
             "div",
             { class: "list" },
             scopes.map((s) =>
-              el("div", { class: "item", role: "button", tabindex: "0", onclick: () => openScopeEditor(s.id) }, [
+              el("div", { class: "item", role: "button", tabindex: "0", onclick: () => openScopeEditor(s.id), onkeydown: event => {
+                if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openScopeEditor(s.id); }
+              } }, [
                 el("div", { class: "title", text: s.name ?? "Pozycja" }),
                 el("div", { class: "sub muted", text: "›" })
               ])
@@ -190,19 +209,14 @@ export async function renderSettings({ store, pricing, setPricing, navigate, use
       el("div", { class: "hr" }),
       el("div", { class: "row", style: "gap:8px;flex-wrap:wrap" }, [
         btn("Eksport", async () => {
-          const payload = await exportAll(store);
-          const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-          const a = document.createElement("a");
-          a.href = URL.createObjectURL(blob);
-          a.download = `klub-backup-${new Date().toISOString().slice(0, 10)}.json`;
-          a.click();
-          URL.revokeObjectURL(a.href);
+          downloadBackup(await exportAll(store));
         }),
         btn("Import", async () => {
           const input = el("input", { type: "file", accept: "application/json" });
           input.onchange = async () => {
             const file = input.files?.[0];
             if (!file) return;
+            if (file.size > 2 * 1024 * 1024) { showToast("Backup przekracza 2 MB."); return; }
             const text = await file.text();
             let json;
             try {
@@ -212,6 +226,7 @@ export async function renderSettings({ store, pricing, setPricing, navigate, use
               return;
             }
             try {
+              downloadBackup(await exportAll(store));
               await replaceAll(store, json);
             } catch (err) {
               showToast(String(err?.message ?? err));
@@ -219,24 +234,7 @@ export async function renderSettings({ store, pricing, setPricing, navigate, use
             }
             const updatedPricing = await store.get("settings", "pricing");
             setPricing(updatedPricing);
-            // Best-effort: push imported data to server (if sync API exists)
-            try {
-              const payload = await exportAll(store);
-              let res = await fetch("/api/sync/push", {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify(payload)
-              });
-              if (res.status === 404) {
-                await fetch("/api/sync_push.php", {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify(payload)
-                });
-              }
-            } catch {
-              // ignore
-            }
+            if (sync) await sync.push();
             showToast("Zaimportowano dane z pliku");
             navigate("#/attendance");
           };
@@ -246,57 +244,36 @@ export async function renderSettings({ store, pricing, setPricing, navigate, use
     ])
   );
 
-  if (user) {
+  if (user && sync) {
     async function syncPull() {
-      let res = await fetch("/api/sync/pull", { cache: "no-store" });
-      if (res.status === 404) res = await fetch("/api/sync_pull.php", { cache: "no-store" });
-      if (!res.ok) {
-        showToast("Nie udało się pobrać danych");
-        return;
-      }
-      const json = await res.json();
-      if (!json?.exists || !json?.payload) {
-        showToast("Brak danych na serwerze");
-        return;
-      }
-      try {
-        await replaceAll(store, json.payload);
-      } catch (e) {
-        showToast(String(e?.message ?? e));
-        return;
-      }
-      try {
-        const key = `klub_sync_updatedAt__${String(user).toLowerCase()}`;
-        const v = Number(json.updatedAt ?? 0) || 0;
-        if (v) localStorage.setItem(key, String(v));
-      } catch {
-        // ignore
-      }
-      const updatedPricing = await store.get("settings", "pricing");
-      setPricing(updatedPricing);
-      showToast("Pobrano dane");
-      navigate("#/attendance");
-    }
-
-    async function syncPush() {
-      const payload = await exportAll(store);
-      let res = await fetch("/api/sync/push", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload)
+      if (sync.busy) { showToast("Synchronizacja trwa. Spróbuj ponownie za chwilę."); return; }
+      const apply = async () => {
+        if (sync.busy) { showToast("Synchronizacja trwa. Spróbuj ponownie za chwilę."); return; }
+        if (await sync.pull({ force: true })) {
+          setPricing(await store.get("settings", "pricing"));
+          showToast("Pobrano dane");
+        } else showToast(sync.status || "Nie pobrano danych. Dane lokalne zachowano; spróbuj ponownie.");
+      };
+      if (!sync.dirty) { await apply(); return; }
+      openModal({
+        title: "Pobrać dane serwera?",
+        body: el("div", { class: "sub", text: "Lokalne zmiany zostaną zastąpione. Przed pobraniem zapiszę ich backup w pliku." }),
+        footer: [
+          btn("Anuluj", () => closeModal()),
+          btn("Zapisz backup i pobierz", async () => {
+            downloadBackup(await exportAll(store));
+            closeModal();
+            await apply();
+          }, "btn--primary")
+        ]
       });
-      if (res.status === 404) {
-        res = await fetch("/api/sync_push.php", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-      }
-      if (!res.ok) {
-        showToast("Nie udało się wysłać danych");
-        return;
-      }
-      showToast("Wysłano dane");
+    }
+    async function syncPush() {
+      if (sync.busy) { showToast("Synchronizacja trwa. Spróbuj ponownie za chwilę."); return; }
+      if (sync.conflicted) { await syncPull(); return; }
+      if (!sync.dirty) { showToast("Dane są już zsynchronizowane."); return; }
+      if (await sync.push()) showToast("Wysłano dane");
+      else showToast(sync.status || "Nie wysłano danych. Dane lokalne zachowano.");
     }
 
     main.appendChild(
@@ -314,3 +291,12 @@ export async function renderSettings({ store, pricing, setPricing, navigate, use
   return main;
 }
 
+
+function downloadBackup(payload) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const anchor = document.createElement("a");
+  anchor.href = URL.createObjectURL(blob);
+  anchor.download = `klub-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(anchor.href), 1000);
+}

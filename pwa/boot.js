@@ -52,7 +52,9 @@ async function start() {
     const modules = [
       "./ui.js",
       "./db.js",
+      "./validation.js",
       "./logic.js",
+      "./sync.js",
       "./pages/attendance.js",
       "./pages/payments.js",
       "./pages/people.js",
