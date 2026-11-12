@@ -47,7 +47,8 @@ export function validateBackup(input) {
         requireValue(row[field] === undefined || row[field] === null || numeric(row[field], true), `${name}: ${field}`);
       }
     }
-    data[name] = structuredClone(rows);
+    // Backup records are JSON data, including when received through sync.
+    data[name] = typeof structuredClone === "function" ? structuredClone(rows) : JSON.parse(JSON.stringify(rows));
   }
   const ids = name => new Set(data[name].map(row => row.id));
   const people = ids("trainees"), groups = ids("groups"), scopes = ids("scopes");

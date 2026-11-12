@@ -1,4 +1,5 @@
 import { exportAll, replaceAll } from "./logic.js";
+import { requestTimeoutSignal } from "./request.js";
 
 export function createSync({ store, accountId, legacyNamespace, legacyStateKey = legacyNamespace, initialDirty = false, resetState = false, onApplied = () => {}, onStatus = () => {},
   request = globalThis.fetch, storage = globalThis.localStorage, delay = globalThis.setTimeout, cancelDelay = globalThis.clearTimeout,
@@ -58,8 +59,8 @@ export function createSync({ store, accountId, legacyNamespace, legacyStateKey =
     timer = delay(() => { timer = null; push(); }, ms);
   }
   async function api(path, options) {
-    let response = await request(`/api/sync/${path}`, { ...options, signal: AbortSignal.timeout(15000) });
-    if (response.status === 404) response = await request(`/api/sync_${path}.php`, { ...options, signal: AbortSignal.timeout(15000) });
+    let response = await request(`/api/sync/${path}`, { ...options, signal: requestTimeoutSignal() });
+    if (response.status === 404) response = await request(`/api/sync_${path}.php`, { ...options, signal: requestTimeoutSignal() });
     return response;
   }
   async function push() {

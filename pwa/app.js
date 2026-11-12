@@ -7,6 +7,7 @@ import { renderStats } from "./pages/stats.js";
 import { renderSettings } from "./pages/settings.js";
 import { el, setActiveTab } from "./ui.js";
 import { createSync } from "./sync.js";
+import { requestTimeoutSignal } from "./request.js";
 
 const state = {
   store: null,
@@ -80,8 +81,8 @@ async function render() {
 }
 
 async function init() {
-  let response = await fetch("/api/me", { cache: "no-store", signal: AbortSignal.timeout(15000) });
-  if (response.status === 404) response = await fetch("/api/me.php", { cache: "no-store", signal: AbortSignal.timeout(15000) });
+  let response = await fetch("/api/me", { cache: "no-store", signal: requestTimeoutSignal() });
+  if (response.status === 404) response = await fetch("/api/me.php", { cache: "no-store", signal: requestTimeoutSignal() });
   if (response.status === 401) { location.replace("/login.html"); return; }
   if (!response.ok) throw new Error("Nie można potwierdzić konta. Spróbuj ponownie.");
   const identity = await response.json();

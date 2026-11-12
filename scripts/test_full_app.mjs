@@ -10,6 +10,10 @@ const { chromium } = await import(moduleName ? pathToFileURL(resolve(moduleName)
 const browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL ?? "chrome", headless: true });
 try {
   const page = await browser.newPage({ timezoneId: "Europe/Warsaw" });
+  await page.addInitScript(() => {
+    delete AbortSignal.timeout;
+    delete globalThis.structuredClone;
+  });
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
   await page.goto(fixture.base);
@@ -76,6 +80,10 @@ try {
   console.log("PASS: full attendance, cancellation, payment, statistics and server synchronization");
 
   const second = await browser.newPage({ timezoneId: "Europe/Warsaw" });
+  await second.addInitScript(() => {
+    delete AbortSignal.timeout;
+    delete globalThis.structuredClone;
+  });
   await second.goto(fixture.base);
   await second.locator("#username").fill(fixture.username);
   await second.locator("#password").fill(fixture.password);

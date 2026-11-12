@@ -19,7 +19,7 @@ export function membershipOverlapsRange(membership, startISO, endISO) {
 }
 
 function changeMembership(membership, active, now = Date.now()) {
-  const periods = structuredClone(membershipPeriods(membership));
+  const periods = membershipPeriods(membership).map(period => ({ ...period }));
   if (active && !isMembershipActive(membership)) periods.push({ fromISO: isoDate(new Date(now)), toISO: null });
   if (!active && isMembershipActive(membership)) periods[periods.length - 1].toISO = isoDate(new Date(now));
   return { ...membership, periods, endedAt: active ? null : now, updatedAt: now };
